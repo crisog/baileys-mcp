@@ -507,11 +507,21 @@ export function createStore(database: DatabaseSync): Store {
   return {
     recordMessage({ chatJid, message, raw, messageSecret }) {
       inTransaction(() => {
-        const inserted = database
+        // Baileys can deliver one message under the phone JID and again under the LID of the same chat
+        const stored = database
+          .prepare(
+            `SELECT EXISTS (
+               SELECT 1 FROM messages WHERE chat_jid IN (SELECT value FROM json_each(:chat_jids)) AND id = :id
+             ) AS value`
+          )
+          .get({ chat_jids: JSON.stringify(aliasesOf(chatJid)), id: message.id });
+        if (integerRowSchema.parse(stored).value === 1) {
+          return false;
+        }
+        database
           .prepare(
             `INSERT INTO messages (chat_jid, id, timestamp, recorded_at, message, raw, message_secret)
-             VALUES (:chat_jid, :id, :timestamp, :recorded_at, :message, :raw, :message_secret)
-             ON CONFLICT (chat_jid, id) DO NOTHING`
+             VALUES (:chat_jid, :id, :timestamp, :recorded_at, :message, :raw, :message_secret)`
           )
           .run({
             chat_jid: chatJid,
@@ -522,9 +532,6 @@ export function createStore(database: DatabaseSync): Store {
             raw,
             message_secret: messageSecret
           });
-        if (Number(inserted.changes) === 0) {
-          return false;
-        }
         return insertEvent({
           body: { type: 'message', message },
           chatJid,
