@@ -167,6 +167,7 @@ The authorization endpoints are `/oauth2/authorize`, `/oauth2/token`, and, for d
 - **REQ-AUTH-016** When an access token is DPoP-bound (RFC 9449), every request with it must carry a valid DPoP proof.
 - **REQ-AUTH-017** The client IP that the limits in REQ-AUTH-012 count by is the TCP peer address, and the server ignores every forwarded header a client sends. When the optional `CLIENT_IP_HEADER` setting names a header that the operator's reverse proxy sets and overwrites, such as `x-real-ip` or `cf-connecting-ip`, the value of that header is the client IP.
 - **REQ-AUTH-018** A request body to the authorization server endpoints, under Better Auth's base path and `/.well-known`, is at most 64 KiB, with or without `Content-Length`. A larger body gets 413 and changes no state. `/mcp` keeps its own limit (DEC-021).
+- **REQ-AUTH-019** Besides the client name and the requested scopes (REQ-AUTH-014), the consent page shows the client ID and the redirect URI of the authorization request, which receives the authorization code. For a client with a client ID metadata document, the client ID is the document's HTTPS URL. The page escapes every value it shows.
 
 ### Connection and pairing
 
@@ -322,6 +323,7 @@ Each Baileys capability that an embedding application needs, and the part of thi
 | DEC-023 | provisional, 2026-10-22 | The store answers a retry request (REQ-STORE-003) for every stored message. An edit or a reaction the account sends is not stored as a message of its own, so only Baileys' in-memory cache of recent sends answers a retry for it, and a restart clears that cache.                                                                                                                         |
 | DEC-024 | provisional, 2026-10-22 | The HTTP layer passes the client IP (REQ-AUTH-017) to Better Auth in `x-baileys-mcp-client-ip`, the only header Better Auth reads, and replaces any value a client sent in it. With `CLIENT_IP_HEADER` set, a request without that header has no client IP and shares one bucket per path. The server does not use the peer address then, because behind the proxy every peer is the proxy.  |
 | DEC-025 | provisional, 2026-10-22 | The auth body limit (REQ-AUTH-018) uses the MCP SDK's `readRequestBody`: it refuses a `Content-Length` over 64 KiB before it reads, and stops a body without one once the body passes the limit. The 413 has no body. A refused request never reaches Better Auth, so it does not count toward the rate limits.                                                                              |
+| DEC-026 | provisional, 2026-10-22 | The consent page labels the client ID the same way for both client kinds (REQ-AUTH-019). For a client ID metadata document client, the client ID is the document URL, so the page has no separate line for it.                                                                                                                                                                               |
 
 ## Risks
 

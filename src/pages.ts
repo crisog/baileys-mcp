@@ -63,8 +63,10 @@ export async function renderConsentPage(request: Request, auth: Auth): Promise<R
   }
   const params = new URLSearchParams(query);
   const clientId = params.get('client_id');
-  if (clientId === null) {
-    throw new Error('A verified consent query has no client_id');
+  const redirectUri = params.get('redirect_uri');
+  // The authorize endpoint rejects a request without either one before it signs the query
+  if (clientId === null || redirectUri === null) {
+    throw new Error('A verified consent query has no client_id or redirect_uri');
   }
 
   const clientName = await findClientName({ auth, clientId, headers: request.headers });
@@ -81,6 +83,7 @@ export async function renderConsentPage(request: Request, auth: Auth): Promise<R
   }
   const body = `<p><strong>${escapeHtml(clientName)}</strong> asks for access to this WhatsApp account.</p>
 <p>Client ID: <code>${escapeHtml(clientId)}</code></p>
+<p>Redirect URI: <code>${escapeHtml(redirectUri)}</code></p>
 <p>Requested scopes:</p>
 <ul>${scopeItems}</ul>
 <button type="button" value="approve">Approve</button>
