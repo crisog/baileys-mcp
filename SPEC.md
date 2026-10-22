@@ -166,6 +166,7 @@ The authorization endpoints are `/oauth2/authorize`, `/oauth2/token`, and, for d
 - **REQ-AUTH-015** Each refresh issues a new refresh token. The previous refresh token stays valid for 30 s, so a client that retries a refresh does not lose access.
 - **REQ-AUTH-016** When an access token is DPoP-bound (RFC 9449), every request with it must carry a valid DPoP proof.
 - **REQ-AUTH-017** The client IP that the limits in REQ-AUTH-012 count by is the TCP peer address, and the server ignores every forwarded header a client sends. When the optional `CLIENT_IP_HEADER` setting names a header that the operator's reverse proxy sets and overwrites, such as `x-real-ip` or `cf-connecting-ip`, the value of that header is the client IP.
+- **REQ-AUTH-018** A request body to the authorization server endpoints, under Better Auth's base path and `/.well-known`, is at most 64 KiB, with or without `Content-Length`. A larger body gets 413 and changes no state. `/mcp` keeps its own limit (DEC-021).
 
 ### Connection and pairing
 
@@ -320,6 +321,7 @@ Each Baileys capability that an embedding application needs, and the part of thi
 | DEC-022 | provisional, 2026-10-22 | Reactions come from the reaction message in `messages.upsert`, not from `messages.reaction`. Baileys emits `messages.reaction` only while it processes that upsert, and its event buffer folds the event into a target message that the buffer still holds.                                                                                                                                  |
 | DEC-023 | provisional, 2026-10-22 | The store answers a retry request (REQ-STORE-003) for every stored message. An edit or a reaction the account sends is not stored as a message of its own, so only Baileys' in-memory cache of recent sends answers a retry for it, and a restart clears that cache.                                                                                                                         |
 | DEC-024 | provisional, 2026-10-22 | The HTTP layer passes the client IP (REQ-AUTH-017) to Better Auth in `x-baileys-mcp-client-ip`, the only header Better Auth reads, and replaces any value a client sent in it. With `CLIENT_IP_HEADER` set, a request without that header has no client IP and shares one bucket per path. The server does not use the peer address then, because behind the proxy every peer is the proxy.  |
+| DEC-025 | provisional, 2026-10-22 | The auth body limit (REQ-AUTH-018) uses the MCP SDK's `readRequestBody`: it refuses a `Content-Length` over 64 KiB before it reads, and stops a body without one once the body passes the limit. The 413 has no body. A refused request never reaches Better Auth, so it does not count toward the rate limits.                                                                              |
 
 ## Risks
 

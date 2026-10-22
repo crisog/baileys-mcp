@@ -3,6 +3,7 @@ import type { Http2Bindings, HttpBindings } from '@hono/node-server';
 
 import { requireMcpAuth } from '@better-auth/mcp';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { readRequestBody } from '@modelcontextprotocol/sdk/server/requestBody.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 
 import type { Auth } from './auth.ts';
@@ -23,6 +24,8 @@ import {
 
 // send_message carries up to 10 MiB of media as base64, which takes 4 bytes for every 3, plus the rest of the call
 const MCP_REQUEST_BODY_MAX_BYTES = Math.ceil(MEDIA_SIZE_MAX_BYTES / 3) * 4 + 1_024 * 1_024;
+// Registration, token, and consent requests are a few KiB; anyone can call these endpoints without a token
+const AUTH_REQUEST_BODY_MAX_BYTES = 64 * 1_024;
 
 type CreateRequestHandlerParams = {
   auth: Auth;
@@ -107,7 +110,14 @@ async function serveAuth({ auth, request, clientIp }: ServeAuthParams): Promise<
   if (clientIp !== null) {
     headers.set(RESOLVED_CLIENT_IP_HEADER, clientIp);
   }
-  return auth.handler(new Request(request, { headers }));
+  if (request.body === null) {
+    return auth.handler(new Request(request, { headers }));
+  }
+  const body = await readRequestBody(request, AUTH_REQUEST_BODY_MAX_BYTES);
+  if (body.tooLarge) {
+    return new Response(null, { status: 413 });
+  }
+  return auth.handler(new Request(request, { headers, body: body.text }));
 }
 
 async function serveMcp(request: Request, tools: ToolServices): Promise<Response> {
