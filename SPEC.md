@@ -317,6 +317,7 @@ Each Baileys capability that an embedding application needs, and the part of thi
 | DEC-020 | provisional, 2026-10-22 | Audio, voice notes, and stickers take no caption, and `mentions` applies only to text, image, video, GIF, and poll content. The other WhatsApp message types have no caption or text for a mention to point into.                                                                                                                                                                            |
 | DEC-021 | provisional, 2026-10-22 | `/mcp` accepts request bodies up to 10 MiB of media as base64 plus 1 MiB, about 14.3 MiB, so `send_message` can carry the media REQ-MEDIA-004 allows. The MCP SDK's default limit is 4 MiB.                                                                                                                                                                                                  |
 | DEC-022 | provisional, 2026-10-22 | Reactions come from the reaction message in `messages.upsert`, not from `messages.reaction`. Baileys emits `messages.reaction` only while it processes that upsert, and its event buffer folds the event into a target message that the buffer still holds.                                                                                                                                  |
+| DEC-023 | provisional, 2026-10-22 | The store answers a retry request (REQ-STORE-003) for every stored message. An edit or a reaction the account sends is not stored as a message of its own, so only Baileys' in-memory cache of recent sends answers a retry for it, and a restart clears that cache.                                                                                                                         |
 
 ## Risks
 
@@ -324,7 +325,7 @@ Each Baileys capability that an embedding application needs, and the part of thi
 - **Public API contract.** The tool names and schemas are a contract for agents and for embedding applications.
 - **Persistent data.** The store holds message content and credentials. A store schema change needs a migration.
 - **Infrastructure.** The server needs a persistent volume and exactly one replica.
-- **Unofficial client.** WhatsApp can change its protocol or restrict an account that uses Baileys. Baileys 7.0.0-rc14 emits no server acknowledgement for the account's own sends and reports a played group voice note as read, so `server_ack` receipts and group `played` receipts are rare or absent.
+- **Unofficial client.** WhatsApp can change its protocol or restrict an account that uses Baileys. Baileys 7.0.0-rc14 emits no server acknowledgement for a send through this server's socket and reports a played group voice note as read. A `server_ack` receipt appears only for a message the account sent from another linked device, and group `played` receipts are rare or absent.
 
 ## Acceptance criteria
 
