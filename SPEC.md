@@ -307,6 +307,8 @@ Each Baileys capability that an embedding application needs, and the part of thi
 | DEC-010 | provisional, 2026-10-22 | The server composes Better Auth's `jwt()`, `mcp()`, and `cimd()` plugins and no separate `oauthProvider()`, as the MCP plugin page requires. `cimd()` uses the Node fetch transport from `@better-auth/cimd/node` and the `mcp-2026-07-28` metadata profile. The rate limits, the 30 s refresh overlap, and the metadata fetch limits in REQ-AUTH-011, 012, and 015 are the plugin defaults. |
 | DEC-011 | provisional, 2026-10-22 | One scope, `whatsapp`, grants every tool. A split into read and send scopes waits until a client needs read-only access.                                                                                                                                                                                                                                                                     |
 | DEC-012 | ratified, 2026-10-22    | Access and refresh tokens use the MCP plugin's default lifetimes.                                                                                                                                                                                                                                                                                                                            |
+| DEC-013 | ratified, 2026-10-22    | v1 has no automated tests, because no WhatsApp account is available to test against. `npm run verify` and scripted runs against the assembled server check each change. Behavior that needs a paired account is checked by hand after pairing.                                                                                                                                               |
+| DEC-014 | provisional, 2026-10-22 | The MCP plugin keeps the base plugin's grant types, which include client credentials, so the embedding application uses that grant (REQ-AUTH-008).                                                                                                                                                                                                                                           |
 
 ## Risks
 
@@ -331,11 +333,10 @@ Each Baileys capability that an embedding application needs, and the part of thi
 - [ ] `download_media` returns a received photo, voice note, video, and document, each in the block type REQ-MEDIA-001 names.
 - [ ] `send_message` delivers each content type in REQ-SEND-001, as a reply when `reply_to` is given.
 - [ ] A message from a LID-only participant carries the phone JID once the server learns the mapping, and an `identity_mapped` event follows.
-- [ ] Every row in [Capability coverage](#capability-coverage) has an exercised tool or a test.
+- [ ] Every row in [Capability coverage](#capability-coverage) has been exercised through its tool against a paired account.
 
 ## Later questions
 
-- Does the `@better-auth/mcp` plugin issue tokens through the client credentials grant? Its base plugin, `@better-auth/oauth-provider`, supports the grant, but the MCP plugin page does not mention it. If it does not, the embedding application uses the authorization code flow once and then refresh tokens (REQ-AUTH-008).
 - Does Grok Bot keep an MCP session open between calls, or act on server notifications? A yes makes a wake-up notification worth adding.
 - What is Grok Bot's largest tool result, and does it display image, audio, and blob blocks? The answer sets the inline media limit.
 - What are WhatsApp's upload limits per media type? Until then the server returns the WhatsApp error as it is.
