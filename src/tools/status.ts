@@ -5,21 +5,11 @@ import { z } from 'zod';
 import type { ToolServices } from './register.ts';
 import type { PairRequest } from '../whatsapp/connection.ts';
 
-import { CONNECTION_STATES, lastDisconnectSchema } from '../store.ts';
+import { CONNECTION_STATES } from '../store.ts';
+import { pairingSchema, connectionStatusSchema } from '../whatsapp/connection.ts';
 import { toolError, toolResult, notConnectedError, PHONE_NUMBER_PATTERN } from './results.ts';
 
-const pairingSchema = z
-  .discriminatedUnion('method', [
-    z.object({ method: z.literal('qr'), qr: z.string() }),
-    z.object({ method: z.literal('code'), code: z.string() })
-  ])
-  .describe('The QR string to render for the phone to scan, or the code to enter under Linked devices');
-
-const getStatusOutputSchema = z.object({
-  state: z.enum(CONNECTION_STATES),
-  account: z.object({ phone_jid: z.string(), lid_jid: z.string().nullable() }).nullable(),
-  last_disconnect: lastDisconnectSchema.nullable(),
-  pairing: pairingSchema.nullable(),
+const getStatusOutputSchema = connectionStatusSchema.extend({
   events_head: z.number().int().describe('The newest event cursor; pull_events with after set to it starts from now')
 });
 

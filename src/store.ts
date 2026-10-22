@@ -50,6 +50,9 @@ const participantSchema = z.object({
 });
 export type Participant = z.infer<typeof participantSchema>;
 
+const RECEIPT_STATES = ['server_ack', 'delivered', 'read', 'played'] as const;
+export type ReceiptState = (typeof RECEIPT_STATES)[number];
+
 const messageRefSchema = z.object({
   chat: z.string(),
   id: z.string()
@@ -138,7 +141,7 @@ export const eventSchema = z.discriminatedUnion('type', [
     type: z.literal('receipt'),
     target: messageRefSchema,
     participant: participantSchema.nullable(),
-    state: z.enum(['server_ack', 'delivered', 'read', 'played'])
+    state: z.enum(RECEIPT_STATES)
   }),
   z.object({
     ...eventBase,
@@ -175,7 +178,7 @@ const eventRowSchema = z.object({
   payload: z.string()
 });
 const eventPayloadSchema = z.record(z.string(), z.unknown());
-const chatRowSchema = z.object({
+export const chatSchema = z.object({
   jid: z.string(),
   kind: z.enum(['dm', 'group']),
   name: z.string().nullable(),
@@ -191,14 +194,19 @@ const sendRowSchema = z.object({
   outcome: z.enum(LEDGER_OUTCOMES)
 });
 
-export type StoredMessage = {
+type StoredMessage = {
   chatJid: string;
   message: Message;
   raw: Uint8Array;
   messageSecret: Uint8Array | null;
 };
 
-type Chat = z.infer<typeof chatRowSchema>;
+export type StoredMessageKey = {
+  chatJid: string;
+  id: string;
+};
+
+type Chat = z.infer<typeof chatSchema>;
 
 export type Group = {
   jid: string;
@@ -210,13 +218,6 @@ type IdentityPair = {
   phoneJid: string;
 };
 
-type RecordMessageParams = {
-  chatJid: string;
-  message: Message;
-  raw: Uint8Array;
-  messageSecret: Uint8Array | null;
-};
-
 type RecordEventParams = {
   body: EventBody;
   chatJid: string | null;
@@ -226,7 +227,7 @@ type RecordEventParams = {
 type RecordEditParams = {
   chatJid: string;
   factKey: string;
-  ref: MessageRef;
+  targetId: string;
   text: string;
   by: Participant;
   editedAt: string;
@@ -235,14 +236,9 @@ type RecordEditParams = {
 type RecordDeleteParams = {
   chatJid: string;
   factKey: string;
-  ref: MessageRef;
+  targetId: string;
   by: Participant;
   deletedAt: string;
-};
-
-type FindMessageParams = {
-  chatJid: string;
-  id: string;
 };
 
 type ListChatsParams = {
@@ -306,12 +302,12 @@ type FinishSendParams = {
 };
 
 export interface Store {
-  recordMessage(params: RecordMessageParams): void;
+  recordMessage(params: StoredMessage): void;
   recordEvent(params: RecordEventParams): void;
   recordEdit(params: RecordEditParams): void;
   recordDelete(params: RecordDeleteParams): void;
   learnIdentity(pair: IdentityPair): void;
-  findMessage(params: FindMessageParams): StoredMessage | null;
+  findMessage(key: StoredMessageKey): StoredMessage | null;
   aliasesOf(jid: string): string[];
   participantFor(jid: string, name: string | null): Participant;
   resolveJid(jid: string): string;
@@ -321,7 +317,7 @@ export interface Store {
   listMessages(params: ListMessagesParams): ListedMessages;
   readEvents(params: ReadEventsParams): ReadEvents;
   eventsHead(): number;
-  firstRetainedCursor(): number;
+  oldestAvailableCursor(): number;
   cursorBefore(at: string): number;
   waitForEvent(params: WaitForEventParams): Promise<void>;
   deleteRecordedBefore(cutoff: string): DeletedCounts;
@@ -532,10 +528,10 @@ export function createStore(database: DatabaseSync): Store {
       inTransaction(() => insertEvent(params));
     },
 
-    recordEdit({ chatJid, factKey, ref, text, by, editedAt }) {
+    recordEdit({ chatJid, factKey, targetId, text, by, editedAt }) {
       inTransaction(() => {
         const isNew = insertEvent({
-          body: { type: 'message_edited', ref, text, by, edited_at: editedAt },
+          body: { type: 'message_edited', ref: { chat: chatJid, id: targetId }, text, by, edited_at: editedAt },
           chatJid,
           factKey
         });
@@ -549,17 +545,17 @@ export function createStore(database: DatabaseSync): Store {
               text,
               edited_at: editedAt,
               chat_jids: JSON.stringify(aliasesOf(chatJid)),
-              id: ref.id
+              id: targetId
             });
         }
         return isNew;
       });
     },
 
-    recordDelete({ chatJid, factKey, ref, by, deletedAt }) {
+    recordDelete({ chatJid, factKey, targetId, by, deletedAt }) {
       inTransaction(() => {
         const isNew = insertEvent({
-          body: { type: 'message_deleted', ref, by, deleted_at: deletedAt },
+          body: { type: 'message_deleted', ref: { chat: chatJid, id: targetId }, by, deleted_at: deletedAt },
           chatJid,
           factKey
         });
@@ -572,7 +568,7 @@ export function createStore(database: DatabaseSync): Store {
             .run({
               deleted_at: deletedAt,
               chat_jids: JSON.stringify(aliasesOf(chatJid)),
-              id: ref.id
+              id: targetId
             });
         }
         return isNew;
@@ -663,7 +659,7 @@ export function createStore(database: DatabaseSync): Store {
         .all({ kind: kind ?? null, limit });
       const chats: Chat[] = [];
       for (const row of rows) {
-        const chat = chatRowSchema.parse(row);
+        const chat = chatSchema.parse(row);
         if (chat.kind === 'dm') {
           // A DM's name is the latest push name the other participant sent
           const nameRow = database
@@ -742,7 +738,7 @@ export function createStore(database: DatabaseSync): Store {
       }
       const hasMore = rows.length > limit;
       // Without more matches, the client may skip every non-matching event up to the head
-      let next = Math.max(after, head);
+      let next = head;
       const lastEvent = events.at(-1);
       if (hasMore && lastEvent !== undefined) {
         next = lastEvent.cursor;
@@ -756,12 +752,13 @@ export function createStore(database: DatabaseSync): Store {
 
     eventsHead,
 
-    firstRetainedCursor() {
+    // The cursor just before the oldest retained event, or the head when no event is retained
+    oldestAvailableCursor() {
       const oldest = readCursor('SELECT min(cursor) AS cursor FROM events');
       if (oldest === null) {
-        return eventsHead() + 1;
+        return eventsHead();
       }
-      return oldest;
+      return oldest - 1;
     },
 
     cursorBefore(at) {
@@ -774,10 +771,6 @@ export function createStore(database: DatabaseSync): Store {
 
     waitForEvent({ timeoutMs, signal }) {
       return new Promise((resolve) => {
-        if (signal.aborted) {
-          resolve();
-          return;
-        }
         const wake = (): void => {
           clearTimeout(timer);
           signal.removeEventListener('abort', wake);

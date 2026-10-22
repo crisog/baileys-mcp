@@ -3,7 +3,6 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 import { z } from 'zod';
 
-import type { Store } from '../store.ts';
 import type { WhatsAppConnection } from '../whatsapp/connection.ts';
 
 export const PHONE_NUMBER_PATTERN = /^\+[1-9]\d{7,14}$/;
@@ -50,6 +49,8 @@ export type ToolError = {
   message_id?: string;
 };
 
+export type ToolFailure = { kind: 'error'; error: ToolError };
+
 export function toolError(error: ToolError): CallToolResult {
   return {
     isError: true,
@@ -77,7 +78,7 @@ const notPairedError: ToolError = {
   retryable: false
 };
 
-type WritableSocket = { kind: 'open'; socket: WASocket } | { kind: 'error'; error: ToolError };
+type WritableSocket = { kind: 'open'; socket: WASocket } | ToolFailure;
 
 // A write needs a linked account and an open connection; a call refused here sends nothing
 export function openSocketForWrite(whatsapp: WhatsAppConnection): WritableSocket {
@@ -98,8 +99,4 @@ export function chatJidOf(chatRef: string): string {
     return `${chatRef.slice(1)}@s.whatsapp.net`;
   }
   return chatRef;
-}
-
-export function chatJidsFor(store: Store, chatRef: string): string[] {
-  return store.aliasesOf(chatJidOf(chatRef));
 }

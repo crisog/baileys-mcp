@@ -6,8 +6,8 @@ import { isJidGroup, jidNormalizedUser } from '@whiskeysockets/baileys';
 import type { Group } from '../store.ts';
 import type { ToolServices } from './register.ts';
 
-import { messageSchema } from '../store.ts';
-import { toolError, toolResult, chatJidsFor, chatRefSchema, isoTimeSchema } from './results.ts';
+import { chatSchema, messageSchema } from '../store.ts';
+import { chatJidOf, toolError, toolResult, chatRefSchema, isoTimeSchema } from './results.ts';
 
 const CHATS_LIMIT_DEFAULT = 100;
 const CHATS_LIMIT_MAX = 500;
@@ -19,16 +19,7 @@ const listChatsInputSchema = z.object({
   limit: z.number().int().min(1).max(CHATS_LIMIT_MAX).default(CHATS_LIMIT_DEFAULT)
 });
 
-const listChatsOutputSchema = z.object({
-  chats: z.array(
-    z.object({
-      jid: z.string(),
-      kind: z.enum(['dm', 'group']),
-      name: z.string().nullable(),
-      last_message_at: z.string().nullable()
-    })
-  )
-});
+const listChatsOutputSchema = z.object({ chats: z.array(chatSchema) });
 
 const listMessagesInputSchema = z.object({
   chat: chatRefSchema,
@@ -85,7 +76,7 @@ export function registerReadTools(server: McpServer, { store, whatsapp, logger }
       annotations: { readOnlyHint: true }
     },
     ({ chat, since, before, limit }) => {
-      const chatJids = chatJidsFor(store, chat);
+      const chatJids = store.aliasesOf(chatJidOf(chat));
       if (!store.isKnownChat(chatJids)) {
         return toolError({
           code: 'unknown_chat',

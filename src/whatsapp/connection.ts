@@ -18,6 +18,7 @@ import type { Store, LastDisconnect, ConnectionState } from '../store.ts';
 
 import { maskJid, createIngest } from './ingest.ts';
 import { decodeStoredMessage } from './normalize.ts';
+import { CONNECTION_STATES, lastDisconnectSchema } from '../store.ts';
 
 const RECONNECT_DELAY_BASE_MS = 1_000;
 const RECONNECT_DELAY_MAX_MS = 30_000;
@@ -51,14 +52,23 @@ const BAILEYS_REDACTED_FIELDS = [
 
 const boomSchema = z.object({ output: z.object({ statusCode: z.number() }) });
 
-type PairingData = { method: 'qr'; qr: string } | { method: 'code'; code: string };
+export const pairingSchema = z
+  .discriminatedUnion('method', [
+    z.object({ method: z.literal('qr'), qr: z.string() }),
+    z.object({ method: z.literal('code'), code: z.string() })
+  ])
+  .describe('The QR string to render for the phone to scan, or the code to enter under Linked devices');
 
-type ConnectionStatus = {
-  state: ConnectionState;
-  account: { phone_jid: string; lid_jid: string | null } | null;
-  last_disconnect: LastDisconnect | null;
-  pairing: PairingData | null;
-};
+export const connectionStatusSchema = z.object({
+  state: z.enum(CONNECTION_STATES),
+  account: z.object({ phone_jid: z.string(), lid_jid: z.string().nullable() }).nullable(),
+  last_disconnect: lastDisconnectSchema.nullable(),
+  pairing: pairingSchema.nullable()
+});
+
+type PairingData = z.infer<typeof pairingSchema>;
+
+type ConnectionStatus = z.infer<typeof connectionStatusSchema>;
 
 export type PairRequest = { method: 'qr' } | { method: 'code'; phoneNumber: string };
 
@@ -83,6 +93,7 @@ type SendOutcome =
 type Presence = 'composing' | 'paused';
 
 type TypingRequest = {
+  socket: WASocket;
   chatJid: string;
   presence: Presence;
   ttlMs: number;
@@ -105,7 +116,7 @@ export interface WhatsAppConnection {
   setTyping(request: TypingRequest): Promise<TypingOutcome>;
 }
 
-type Auth = {
+type WhatsAppAuth = {
   state: AuthenticationState;
   saveCreds: () => Promise<void>;
 };
@@ -142,7 +153,7 @@ export async function createWhatsAppConnection({
   const typingByChat = new Map<string, TypingTimers>();
   const ingest = createIngest({ store, logger, getAccount });
 
-  async function loadAuth(): Promise<Auth> {
+  async function loadAuth(): Promise<WhatsAppAuth> {
     await mkdir(authDirectory, { recursive: true, mode: AUTH_DIRECTORY_MODE });
     // mkdir leaves the mode of an existing directory unchanged
     await chmod(authDirectory, AUTH_DIRECTORY_MODE);
@@ -286,7 +297,9 @@ export async function createWhatsAppConnection({
   function handleClose(disconnect: BaileysConnectionState['lastDisconnect']): void {
     socket = null;
     pairing = null;
-    clearAllTyping();
+    for (const chatJid of typingByChat.keys()) {
+      clearTyping(chatJid);
+    }
     const code = statusCodeOf(disconnect?.error);
     lastDisconnect = {
       code,
@@ -354,12 +367,6 @@ export async function createWhatsAppConnection({
     clearTimeout(timers.expiry);
     typingByChat.delete(chatJid);
     return true;
-  }
-
-  function clearAllTyping(): void {
-    for (const chatJid of [...typingByChat.keys()]) {
-      clearTyping(chatJid);
-    }
   }
 
   // Typing indicators are best effort: a failure is logged, and the returned promise never rejects
@@ -488,11 +495,7 @@ export async function createWhatsAppConnection({
       return outcome;
     },
 
-    async setTyping({ chatJid, presence, ttlMs }) {
-      const current = getOpenSocket();
-      if (current === null) {
-        return { kind: 'not_connected' };
-      }
+    async setTyping({ socket: current, chatJid, presence, ttlMs }) {
       const typingJid = typingJidOf(chatJid);
       clearTyping(typingJid);
       try {

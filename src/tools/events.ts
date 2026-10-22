@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { ToolServices } from './register.ts';
 
 import { eventSchema, EVENT_TYPES } from '../store.ts';
-import { toolError, toolResult, chatJidsFor, chatRefSchema, isoTimeSchema } from './results.ts';
+import { chatJidOf, toolError, toolResult, chatRefSchema, isoTimeSchema } from './results.ts';
 
 const EVENTS_LIMIT_DEFAULT = 100;
 const EVENTS_LIMIT_MAX = 500;
@@ -56,16 +56,16 @@ export function registerEventsTool(server: McpServer, { store }: ToolServices): 
       annotations: { readOnlyHint: true }
     },
     async ({ after, since, types, chats, limit, wait_ms }, { signal }) => {
-      const firstRetained = store.firstRetainedCursor();
-      let start = firstRetained - 1;
+      const oldestAvailable = store.oldestAvailableCursor();
+      let start = oldestAvailable;
       if (after !== undefined) {
         // A cursor past the head was issued by another database and would skip events silently
-        if (after < firstRetained - 1 || after > store.eventsHead()) {
+        if (after < oldestAvailable || after > store.eventsHead()) {
           return toolError({
             code: 'invalid_cursor',
-            message: `Cursor ${after} is outside the retained event log. Resume with after: ${firstRetained - 1}.`,
+            message: `Cursor ${after} is outside the retained event log. Resume with after: ${oldestAvailable}.`,
             retryable: false,
-            oldest_available: firstRetained - 1
+            oldest_available: oldestAvailable
           });
         }
         start = after;
@@ -75,7 +75,7 @@ export function registerEventsTool(server: McpServer, { store }: ToolServices): 
 
       let chatJids: string[] | undefined;
       if (chats !== undefined) {
-        chatJids = chats.flatMap((chat) => chatJidsFor(store, chat));
+        chatJids = chats.flatMap((chat) => store.aliasesOf(chatJidOf(chat)));
       }
       const query = { types, chatJids, limit };
       const deadline = Date.now() + wait_ms;

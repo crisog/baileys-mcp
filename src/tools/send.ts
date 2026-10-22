@@ -6,9 +6,9 @@ import { z } from 'zod';
 import { randomBytes } from 'node:crypto';
 import { jidNormalizedUser } from '@whiskeysockets/baileys';
 
-import type { ToolError } from './results.ts';
 import type { Message, Store } from '../store.ts';
 import type { ToolServices } from './register.ts';
+import type { ToolError, ToolFailure } from './results.ts';
 
 import { MEDIA_SIZE_MAX_BYTES } from '../whatsapp/media.ts';
 import { decodeStoredMessage } from '../whatsapp/normalize.ts';
@@ -134,11 +134,9 @@ type Draft =
   | { kind: 'media'; content: MediaContent; media: MediaBytes }
   | { kind: 'stored_media'; content: MediaContent; message: WAMessage; media: StoredMedia };
 
-type Failure = { kind: 'error'; error: ToolError };
+type Recipient = { kind: 'resolved'; jid: string } | ToolFailure;
 
-type Recipient = { kind: 'resolved'; jid: string } | Failure;
-
-type MessageContent = { kind: 'ready'; content: AnyMessageContent } | Failure;
+type MessageContent = { kind: 'ready'; content: AnyMessageContent } | ToolFailure;
 
 type ResolveRecipientParams = {
   socket: WASocket;
@@ -209,7 +207,7 @@ export function registerSendTool(server: McpServer, services: ToolServices): voi
   );
 }
 
-function draftOf(store: Store, content: Content): Draft | Failure {
+function draftOf(store: Store, content: Content): Draft | ToolFailure {
   if (!('media' in content)) {
     return { kind: 'plain', content };
   }

@@ -12,7 +12,7 @@ const MEDIA_REUPLOAD_TIMEOUT_MS = 30_000;
 // The media CDN answers 404 or 410 once it no longer holds the file
 const MEDIA_EXPIRED_STATUS_CODES = [404, 410];
 
-export type MediaDownload =
+type MediaDownload =
   | { kind: 'downloaded'; bytes: Buffer }
   | { kind: 'too_large' }
   | { kind: 'not_connected' }

@@ -3,6 +3,7 @@ import type {
   LIDMapping,
   WAMessage,
   WAMessageKey,
+  BaileysEventMap,
   WAMessageUpdate,
   MessageUserReceiptUpdate
 } from '@whiskeysockets/baileys';
@@ -19,7 +20,7 @@ import {
   normalizeMessageContent
 } from '@whiskeysockets/baileys';
 
-import type { Store, Message, Participant } from '../store.ts';
+import type { Store, Message, Participant, ReceiptState } from '../store.ts';
 
 import { textOf, toIsoTime, encodeMediaId, normalizeContent } from './normalize.ts';
 
@@ -33,10 +34,7 @@ export type Account = {
   name: string | null;
 };
 
-type Reaction = {
-  key: WAMessageKey;
-  reaction: proto.IReaction;
-};
+type Reaction = BaileysEventMap['messages.reaction'][number];
 
 type CreateIngestParams = {
   store: Store;
@@ -44,7 +42,7 @@ type CreateIngestParams = {
   getAccount: () => Account | null;
 };
 
-export interface Ingest {
+interface Ingest {
   messages(messages: WAMessage[]): void;
   statusUpdates(updates: WAMessageUpdate[]): void;
   receipts(updates: MessageUserReceiptUpdate[]): void;
@@ -66,8 +64,6 @@ type DecryptVoteParams = {
   creatorJids: string[];
   voterJids: string[];
 };
-
-type ReceiptState = 'server_ack' | 'delivered' | 'read' | 'played';
 
 type RecordReceiptParams = {
   chatJid: string;
@@ -153,15 +149,13 @@ export function createIngest({ store, logger, getAccount }: CreateIngestParams):
 
     const normalized = normalizeContent(content, encodeMediaId({ chatJid, id: key.id }));
     const message: Message = {
-      chat: store.resolveJid(chatJid),
+      chat: chatJid,
       chat_kind: chatKindOf(chatJid),
       id: key.id,
       from_me: key.fromMe === true,
       sender: senderOf(key, waMessage.pushName ?? null),
       timestamp: toIsoTime(waMessage.messageTimestamp),
       ...normalized,
-      reply_to: resolveReplyTo(normalized.reply_to),
-      mentions: normalized.mentions.map(store.resolveJid),
       edited_at: null,
       deleted_at: null
     };
@@ -175,13 +169,6 @@ export function createIngest({ store, logger, getAccount }: CreateIngestParams):
     });
   }
 
-  function resolveReplyTo(replyTo: Message['reply_to']): Message['reply_to'] {
-    if (replyTo === null || replyTo.participant === null) {
-      return replyTo;
-    }
-    return { ...replyTo, participant: store.resolveJid(replyTo.participant) };
-  }
-
   function ingestProtocolMessage(
     waMessage: WAMessage,
     protocolMessage: proto.Message.IProtocolMessage,
@@ -192,12 +179,11 @@ export function createIngest({ store, logger, getAccount }: CreateIngestParams):
     if (!operationId || !targetId) {
       return;
     }
-    const ref = { chat: store.resolveJid(chatJid), id: targetId };
     if (protocolMessage.type === proto.Message.ProtocolMessage.Type.REVOKE) {
       store.recordDelete({
         chatJid,
         factKey: `message_deleted:${chatJid}:${operationId}`,
-        ref,
+        targetId,
         by: senderOf(waMessage.key, waMessage.pushName ?? null),
         deletedAt: toIsoTime(waMessage.messageTimestamp)
       });
@@ -219,7 +205,7 @@ export function createIngest({ store, logger, getAccount }: CreateIngestParams):
     store.recordEdit({
       chatJid,
       factKey: `message_edited:${chatJid}:${operationId}`,
-      ref,
+      targetId,
       text,
       by,
       editedAt: editTime(protocolMessage, waMessage)
@@ -282,7 +268,7 @@ export function createIngest({ store, logger, getAccount }: CreateIngestParams):
     store.recordEdit({
       chatJid,
       factKey: `message_edited:${chatJid}:${editId}`,
-      ref: { chat: store.resolveJid(chatJid), id: targetId },
+      targetId,
       text,
       by,
       editedAt: editTime(edit, waMessage)
@@ -334,7 +320,7 @@ export function createIngest({ store, logger, getAccount }: CreateIngestParams):
     store.recordEvent({
       body: {
         type: 'poll_vote',
-        poll: { chat: store.resolveJid(chatJid), id: pollId },
+        poll: { chat: chatJid, id: pollId },
         voter,
         selected_options: selectedOptions
       },
@@ -356,7 +342,7 @@ export function createIngest({ store, logger, getAccount }: CreateIngestParams):
     store.recordEvent({
       body: {
         type: 'reaction',
-        target: { chat: store.resolveJid(chatJid), id: key.id },
+        target: { chat: chatJid, id: key.id },
         reactor: senderOf(reactionKey, null),
         emoji
       },
@@ -409,17 +395,13 @@ export function createIngest({ store, logger, getAccount }: CreateIngestParams):
     store.recordEvent({
       body: {
         type: 'receipt',
-        target: { chat: store.resolveJid(chatJid), id },
+        target: { chat: chatJid, id },
         participant,
         state
       },
       chatJid,
       factKey: `receipt:${chatJid}:${id}:${participantKey}:${state}`
     });
-  }
-
-  function ingestIdentity({ lid, pn }: LIDMapping): void {
-    learnPair(lid, pn);
   }
 
   // One failed item is logged by its key and the rest of the batch still records
@@ -447,7 +429,11 @@ export function createIngest({ store, logger, getAccount }: CreateIngestParams):
       forEachItem(reactions, ingestReaction, ({ key }) => describeKey('reaction', key));
     },
     identity(mapping) {
-      forEachItem([mapping], ingestIdentity, () => ({ event: 'identity_mapped' }));
+      forEachItem(
+        [mapping],
+        ({ lid, pn }) => learnPair(lid, pn),
+        () => ({ event: 'identity_mapped' })
+      );
     }
   };
 }

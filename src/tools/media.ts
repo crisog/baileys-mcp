@@ -5,9 +5,9 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 import { z } from 'zod';
 
-import type { ToolError } from './results.ts';
 import type { ToolServices } from './register.ts';
-import type { Store, Message, StoredMessage } from '../store.ts';
+import type { Store, Message } from '../store.ts';
+import type { ToolError, ToolFailure } from './results.ts';
 import type { WhatsAppConnection } from '../whatsapp/connection.ts';
 
 import { toolError, notConnectedError } from './results.ts';
@@ -35,9 +35,7 @@ type MediaBlockParams = {
   data: string;
 };
 
-type StoredMediaLookup =
-  | { kind: 'found'; message: WAMessage; media: NonNullable<Message['media']> }
-  | { kind: 'error'; error: ToolError };
+type StoredMediaLookup = { kind: 'found'; message: WAMessage; media: NonNullable<Message['media']> } | ToolFailure;
 
 type FetchStoredMediaParams = {
   message: WAMessage;
@@ -46,7 +44,12 @@ type FetchStoredMediaParams = {
   logger: Logger;
 };
 
-type StoredMediaBytes = { kind: 'downloaded'; bytes: Buffer } | { kind: 'error'; error: ToolError };
+type StoredMediaBytes = { kind: 'downloaded'; bytes: Buffer } | ToolFailure;
+
+const unknownMedia: ToolFailure = {
+  kind: 'error',
+  error: { code: 'unknown_message', message: 'No stored message has this media_id.', retryable: false }
+};
 
 export function registerMediaTool(server: McpServer, { store, whatsapp, logger }: ToolServices): void {
   server.registerTool(
@@ -88,16 +91,16 @@ export function registerMediaTool(server: McpServer, { store, whatsapp, logger }
 
 export function findStoredMedia(store: Store, mediaId: string): StoredMediaLookup {
   const key = decodeMediaId(mediaId);
-  let stored: StoredMessage | null = null;
-  if (key !== null) {
-    stored = store.findMessage(key);
+  if (key === null) {
+    return unknownMedia;
   }
-  const media = stored?.message.media;
-  if (stored === null || media === null || media === undefined) {
-    return {
-      kind: 'error',
-      error: { code: 'unknown_message', message: 'No stored message has this media_id.', retryable: false }
-    };
+  const stored = store.findMessage(key);
+  if (stored === null) {
+    return unknownMedia;
+  }
+  const { media } = stored.message;
+  if (media === null) {
+    return unknownMedia;
   }
   if (media.size_bytes !== null && media.size_bytes > MEDIA_SIZE_MAX_BYTES) {
     return { kind: 'error', error: tooLargeError(media.size_bytes) };
@@ -135,13 +138,14 @@ export async function fetchStoredMedia({
   return { kind: 'downloaded', bytes: download.bytes };
 }
 
-// The stored size is unknown when the sender omitted it and the download passed the limit
+// The error omits size_bytes when the size is unknown
 export function tooLargeError(sizeBytes: number | null): ToolError {
-  const message = `The media is larger than the ${MEDIA_SIZE_MAX_BYTES} byte limit.`;
-  if (sizeBytes === null) {
-    return { code: 'media_too_large', message, retryable: false };
-  }
-  return { code: 'media_too_large', message, retryable: false, size_bytes: sizeBytes };
+  return {
+    code: 'media_too_large',
+    message: `The media is larger than the ${MEDIA_SIZE_MAX_BYTES} byte limit.`,
+    retryable: false,
+    size_bytes: sizeBytes ?? undefined
+  };
 }
 
 function mediaBlock({ mediaId, mimeType, data }: MediaBlockParams): MediaBlock {

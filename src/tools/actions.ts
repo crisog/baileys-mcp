@@ -208,7 +208,12 @@ export function registerActionTools(server: McpServer, services: ToolServices): 
         return toolError(writable.error);
       }
       const chatJid = chatJidOf(chat);
-      const outcome = await whatsapp.setTyping({ chatJid, presence: state, ttlMs: ttl_s * 1_000 });
+      const outcome = await whatsapp.setTyping({
+        socket: writable.socket,
+        chatJid,
+        presence: state,
+        ttlMs: ttl_s * 1_000
+      });
       if (outcome.kind === 'not_connected') {
         return toolError(notConnectedError);
       }

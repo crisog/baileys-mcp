@@ -3,9 +3,8 @@ import type { WAMessage } from '@whiskeysockets/baileys';
 import { z } from 'zod';
 import { proto, toNumber, jidNormalizedUser } from '@whiskeysockets/baileys';
 
-import type { Message } from '../store.ts';
+import type { Message, StoredMessageKey } from '../store.ts';
 
-// Absent protobuf scalars read as their protobuf default, 0 or the empty string, as a decoded message reports them.
 // Media without a declared type is still downloadable; clients get the generic binary type
 const UNKNOWN_MIME_TYPE = 'application/octet-stream';
 
@@ -14,7 +13,7 @@ const mediaIdSchema = z.tuple([z.string(), z.string()]);
 // Protobuf 64-bit fields arrive as a number or a Long; toNumber accepts both
 type ProtoNumber = Parameters<typeof toNumber>[0];
 
-export type MessageContent = Pick<
+type NormalizedContent = Pick<
   Message,
   'type' | 'text' | 'media' | 'location' | 'contacts' | 'poll' | 'reply_to' | 'mentions'
 >;
@@ -28,11 +27,6 @@ type MediaDetails = {
   fileName: string | null;
   durationSeconds: number | null;
   isAnimated: boolean | null;
-};
-
-export type StoredMessageKey = {
-  chatJid: string;
-  id: string;
 };
 
 export function encodeMediaId({ chatJid, id }: StoredMessageKey): string {
@@ -90,7 +84,8 @@ export function textOf(content: proto.IMessage | null | undefined): string | nul
   return null;
 }
 
-export function normalizeContent(content: proto.IMessage, mediaId: string): MessageContent {
+// Absent protobuf scalars read as their protobuf default, 0 or the empty string, as a decoded message reports them
+export function normalizeContent(content: proto.IMessage, mediaId: string): NormalizedContent {
   const { reply_to, mentions } = readContext(content);
   const base = {
     text: null,
