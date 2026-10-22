@@ -5,13 +5,21 @@ import type {
   WAMessage,
   WAMessageKey,
   AnyMessageContent,
+  AuthenticationCreds,
   AuthenticationState,
   ConnectionState as BaileysConnectionState
 } from '@whiskeysockets/baileys';
 
 import { z } from 'zod';
-import { rm, chmod, mkdir } from 'node:fs/promises';
-import { makeWASocket, DisconnectReason, jidNormalizedUser, useMultiFileAuthState } from '@whiskeysockets/baileys';
+import { join } from 'node:path';
+import { rm, chmod, mkdir, rename, writeFile } from 'node:fs/promises';
+import {
+  BufferJSON,
+  makeWASocket,
+  DisconnectReason,
+  jidNormalizedUser,
+  useMultiFileAuthState
+} from '@whiskeysockets/baileys';
 
 import type { Account } from './ingest.ts';
 import type { Store, LastDisconnect, ConnectionState } from '../store.ts';
@@ -27,6 +35,7 @@ const PAIRING_START_TIMEOUT_MS = 20_000;
 const SEND_TIMEOUT_MS = 60_000;
 const TYPING_REFRESH_INTERVAL_MS = 10_000;
 const AUTH_DIRECTORY_MODE = 0o700;
+const CREDENTIALS_FILE = 'creds.json';
 // Baileys puts JIDs, protocol nodes, and message keys in these fields of its warn and error lines
 const BAILEYS_REDACTED_FIELDS = [
   'attrs',
@@ -142,6 +151,7 @@ export async function createWhatsAppConnection({
 }: CreateWhatsAppConnectionParams): Promise<WhatsAppConnection> {
   const baileysLogger = logger.child({ component: 'baileys' }, { level: 'warn', redact: BAILEYS_REDACTED_FIELDS });
   const pendingWrites = new Set<Promise<unknown>>();
+  let credentialsWrite: Promise<void> = Promise.resolve();
   let auth = await loadAuth();
   let socket: WASocket | null = null;
   let state: ConnectionState = 'closed';
@@ -157,18 +167,32 @@ export async function createWhatsAppConnection({
     await mkdir(authDirectory, { recursive: true, mode: AUTH_DIRECTORY_MODE });
     // mkdir leaves the mode of an existing directory unchanged
     await chmod(authDirectory, AUTH_DIRECTORY_MODE);
-    const { state: authState, saveCreds } = await useMultiFileAuthState(authDirectory);
-    const { keys } = authState;
+    const { state: authState } = await useMultiFileAuthState(authDirectory);
+    const { creds, keys } = authState;
     return {
       state: {
-        creds: authState.creds,
+        creds,
         keys: {
           get: keys.get,
           set: (data) => trackWrite(Promise.resolve(keys.set(data)))
         }
       },
-      saveCreds
+      saveCreds: () => saveCredentials(creds)
     };
+  }
+
+  // Baileys' own saveCreds rewrites creds.json in place, and its reader takes a half-written file for new credentials
+  function saveCredentials(creds: AuthenticationCreds): Promise<void> {
+    const write = credentialsWrite.then(async () => {
+      const credentialsPath = join(authDirectory, CREDENTIALS_FILE);
+      const temporaryPath = `${credentialsPath}.tmp`;
+      await writeFile(temporaryPath, JSON.stringify(creds, BufferJSON.replacer), { flush: true });
+      // A rename replaces the file in one step, so a crash leaves either the previous credentials or the new ones
+      await rename(temporaryPath, credentialsPath);
+    });
+    // Writes take turns on the temporary file; each caller still receives the failure of its own write
+    credentialsWrite = write.catch(() => undefined);
+    return write;
   }
 
   // Shutdown and pairing wait for these, so a half-written credential file never survives
