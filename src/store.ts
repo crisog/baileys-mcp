@@ -260,6 +260,7 @@ type ListedMessages = {
 
 type ReadEventsParams = {
   after: number;
+  since: string | undefined;
   types: EventType[] | undefined;
   chatJids: string[] | undefined;
   limit: number;
@@ -712,7 +713,7 @@ export function createStore(database: DatabaseSync): Store {
       };
     },
 
-    readEvents({ after, types, chatJids, limit }) {
+    readEvents({ after, since, types, chatJids, limit }) {
       let typesJson: string | null = null;
       if (types !== undefined) {
         typesJson = JSON.stringify(types);
@@ -727,6 +728,7 @@ export function createStore(database: DatabaseSync): Store {
         .prepare(
           `SELECT cursor, at, payload FROM events
            WHERE cursor > :after
+             AND (:since IS NULL OR at >= :since)
              AND (:types IS NULL OR type IN (SELECT value FROM json_each(:types)))
              AND (:chat_jids IS NULL OR chat_jid IN (SELECT value FROM json_each(:chat_jids)))
            ORDER BY cursor
@@ -734,6 +736,7 @@ export function createStore(database: DatabaseSync): Store {
         )
         .all({
           after,
+          since: since ?? null,
           types: typesJson,
           chat_jids: chatJidsJson,
           limit: limit + 1

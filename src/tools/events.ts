@@ -74,13 +74,13 @@ export function registerEventsTool(server: McpServer, { store }: ToolServices): 
         start = store.cursorBefore(since);
       }
 
-      // Aliases resolve on each read, so a mapping learned during the wait applies to the message that taught it
+      // Each read resolves aliases again and filters by since, because the wait can learn a mapping or record older events
       const readPage = (cursor: number): ReadEvents => {
         let chatJids: string[] | undefined;
         if (chats !== undefined) {
           chatJids = chats.flatMap((chat) => store.aliasesOf(chatJidOf(chat)));
         }
-        return store.readEvents({ after: cursor, types, chatJids, limit });
+        return store.readEvents({ after: cursor, since, types, chatJids, limit });
       };
       const deadline = Date.now() + wait_ms;
       let page = readPage(start);
