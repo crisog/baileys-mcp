@@ -2,9 +2,29 @@
 
 An [MCP](https://modelcontextprotocol.io) server that gives AI agents access to a WhatsApp account through [Baileys](https://github.com/WhiskeySockets/Baileys), served over Streamable HTTP.
 
-The server serves MCP at `/mcp` behind OAuth. It is its own authorization server: MCP clients discover it from the `/mcp` URL, and the operator signs in with GitHub and approves each client. The tools read the connection status, pair the account, list chats and stored messages, pull inbound events, download media, send messages, edit and react to them, mark them read, and show the typing indicator.
+The server serves MCP at `/mcp` behind OAuth. It is its own authorization server: MCP clients discover it from the `/mcp` URL, and the operator signs in with GitHub and approves each client. The server keeps one WhatsApp connection open, stores every message and event it receives, and lets clients read, wait for, and send messages through the tools below.
 
 Baileys is an unofficial WhatsApp Web client. WhatsApp can change its protocol or restrict an account that uses it, so link a dedicated number.
+
+Status: all v1 tools are implemented. They have been exercised against a running server with no phone linked; behavior that needs a linked phone, such as real sends, receipts, and media, has not been verified yet.
+
+## Tools
+
+| Tool               | What it does                                                                                                                                                             |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `get_status`       | Returns the connection state, the linked account, the last disconnect, the pairing QR string or code while pairing, and the newest event cursor.                         |
+| `pair`             | Links a phone: `method: "qr"` restarts QR pairing, and `method: "code"` with `phone_number` returns a code to enter on the phone.                                        |
+| `list_chats`       | Lists the groups the account is in and the direct chats with stored messages, most recent first.                                                                         |
+| `list_messages`    | Lists the stored messages of one chat, newest first, with optional `since`, `before`, and `limit`.                                                                       |
+| `pull_events`      | Returns inbound events after a cursor (`after`) or from a time (`since`), filtered by `types` and `chats`. With `wait_ms` (at most 25 000), it waits for the next event. |
+| `download_media`   | Returns the photo, video, audio, document, or sticker of a stored message by its `media_id`, up to 10 MiB.                                                               |
+| `send_message`     | Sends text, an image, a video, a GIF, audio, a voice note, a document, a sticker, a location, or a poll, optionally as a reply and with mentions.                        |
+| `edit_message`     | Replaces the text of a message the account sent.                                                                                                                         |
+| `react_to_message` | Sets the account's reaction on a message to one emoji, or removes it with `emoji: null`.                                                                                 |
+| `mark_read`        | Sends read receipts for 1 to 100 stored messages.                                                                                                                        |
+| `set_typing`       | Shows the typing indicator in a chat, refreshed every 10 s, or stops it.                                                                                                 |
+
+A chat or participant is a phone JID (`5215512345678@s.whatsapp.net`), a LID JID (`123456789@lid`), a group JID (`120363000000000000@g.us`), or an E.164 number (`+5215512345678`). A failed call returns `isError: true` with `{ code, message, retryable }`. [SPEC.md](SPEC.md) defines every input, output, and error code.
 
 ## Configure
 
@@ -38,6 +58,12 @@ npm start
 
 On its first start the server begins QR pairing. Call `get_status` and render its `pairing.qr` string as a QR code, then scan it on the phone under Linked devices. To link with a code instead, call `pair` with `method: "code"` and the phone number in E.164 form, then enter the returned code on the phone. When WhatsApp logs the account out, `get_status` reports `logged_out` and `pair` links the phone again.
 
+## Receive messages
+
+`pull_events` is how a client learns about new activity. Each event has a `cursor` and one of these types: `message`, `message_edited`, `message_deleted`, `reaction`, `receipt`, `poll_vote`, `identity_mapped`, and `connection`. The server records events whether or not a client is connected, so a client that keeps the `next` cursor of each call and passes it as `after` in the next call misses nothing, also across restarts. A client calls `pull_events` with `wait_ms` in a loop to get new events as soon as they arrive.
+
+The server keeps messages and events for `RETENTION_DAYS`. A cursor older than that returns `invalid_cursor` with the oldest cursor still available.
+
 ## Send messages
 
 `send_message`, `edit_message`, and `react_to_message` require an `idempotency_key`. A repeated call with the same key returns the first outcome and sends nothing, so a client can retry a call safely. The server keeps each key for 7 days.
@@ -68,7 +94,7 @@ curl -u "$CLIENT_ID:$CLIENT_SECRET" "$PUBLIC_BASE_URL/api/auth/oauth2/token" \
 
 ## Develop
 
-`npm run verify` runs every check that CI runs.
+`npm run verify` runs every check that CI runs. [DRIVER.md](DRIVER.md) shows how to run the server locally and call it with `curl`, without a GitHub OAuth app or a linked phone.
 
 ## License
 
