@@ -1,0 +1,39 @@
+{
+  "name": "baileys-mcp",
+  "version": "0.0.0",
+  "private": true,
+  "description": "MCP server that exposes a WhatsApp account through Baileys",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "npm@11.19.1",
+  "engines": {
+    "node": "24.22.1"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "pino": "10.4.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "eslint-plugin-perfectionist": "5.13.0",
+    "husky": "9.1.7",
+    "knip": "6.42.1",
+    "lint-staged": "17.6.0",
+    "oxfmt": "0.74.0",
+    "oxlint": "1.89.0",
+    "tsrs": "0.18.0-ts7.1.0-dev.20260929"
+  },
+  "scripts": {
+    "prepare": "husky",
+    "start": "node src/main.ts",
+    "typecheck": "tsrs --noEmit",
+    "lint": "oxlint --deny-warnings",
+    "lint:fix": "oxlint --fix",
+    "format": "oxfmt --check",
+    "format:write": "oxfmt",
+    "knip": "knip",
+    "audit:prod": "npm audit --omit=dev --audit-level=high",
+    "verify": "npm run format && npm run lint && npm run typecheck && npm run knip && npm run audit:prod"
+  }
+}
