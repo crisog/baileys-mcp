@@ -1,9 +1,11 @@
 import { z } from 'zod';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 const DATABASE_FILE_NAME = 'baileys-mcp.sqlite';
+// The file holds message content and the OAuth state
+const DATABASE_FILE_MODE = 0o600;
 const MIGRATIONS_DIRECTORY = new URL('../migrations/', import.meta.url);
 // The server and the register-client command can write to the file at the same time
 const BUSY_TIMEOUT_MS = 5_000;
@@ -17,7 +19,11 @@ type OpenedDatabase = {
 
 export function openDatabase(dataDirectory: string): OpenedDatabase {
   mkdirSync(dataDirectory, { recursive: true });
-  const database = new DatabaseSync(join(dataDirectory, DATABASE_FILE_NAME), { timeout: BUSY_TIMEOUT_MS });
+  const databasePath = join(dataDirectory, DATABASE_FILE_NAME);
+  // Sets the mode before SQLite opens the file, including a file an earlier version created; SQLite copies it to the journal file
+  writeFileSync(databasePath, '', { flag: 'a', mode: DATABASE_FILE_MODE });
+  chmodSync(databasePath, DATABASE_FILE_MODE);
+  const database = new DatabaseSync(databasePath, { timeout: BUSY_TIMEOUT_MS });
   const appliedMigrations = applyMigrations(database);
   return {
     database,

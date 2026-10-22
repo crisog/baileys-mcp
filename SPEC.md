@@ -237,6 +237,7 @@ The authorization endpoints are `/oauth2/authorize`, `/oauth2/token`, and, for d
 - **REQ-STORE-002** The server deletes messages and events older than the retention period (default 30 days, configurable) and send ledger entries older than 7 days.
 - **REQ-STORE-003** When a recipient asks for a retry of a message the account sent, Baileys requests the message from the server and the server returns it from its store.
 - **REQ-STORE-004** The OAuth state (clients, consents, tokens, and signing keys) lives in the same durable store and survives a restart. Its tables change only through committed migrations.
+- **REQ-STORE-005** Only the server's user can read or write the database file and the journal file SQLite writes next to it (mode 0600). The server also narrows the mode of an existing database file when it starts.
 
 ## Invariants
 
@@ -324,6 +325,7 @@ Each Baileys capability that an embedding application needs, and the part of thi
 | DEC-024 | provisional, 2026-10-22 | The HTTP layer passes the client IP (REQ-AUTH-017) to Better Auth in `x-baileys-mcp-client-ip`, the only header Better Auth reads, and replaces any value a client sent in it. With `CLIENT_IP_HEADER` set, a request without that header has no client IP and shares one bucket per path. The server does not use the peer address then, because behind the proxy every peer is the proxy.  |
 | DEC-025 | provisional, 2026-10-22 | The auth body limit (REQ-AUTH-018) uses the MCP SDK's `readRequestBody`: it refuses a `Content-Length` over 64 KiB before it reads, and stops a body without one once the body passes the limit. The 413 has no body. A refused request never reaches Better Auth, so it does not count toward the rate limits.                                                                              |
 | DEC-026 | provisional, 2026-10-22 | The consent page labels the client ID the same way for both client kinds (REQ-AUTH-019). For a client ID metadata document client, the client ID is the document URL, so the page has no separate line for it.                                                                                                                                                                               |
+| DEC-027 | provisional, 2026-10-22 | The server creates the database file with mode 0600 before SQLite opens it, and sets the mode on every start (REQ-STORE-005). SQLite gives its journal file the mode of the database file. The store uses the default rollback journal (`journal_mode` is `delete`), so no `-wal` or `-shm` file exists. The mode of `DATA_DIR` does not change.                                             |
 
 ## Risks
 
