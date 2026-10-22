@@ -179,6 +179,10 @@ export function createIngest({ store, logger, getAccount }: CreateIngestParams):
     protocolMessage: proto.Message.IProtocolMessage,
     chatJid: string
   ): void {
+    if (protocolMessage.type === proto.Message.ProtocolMessage.Type.LID_MIGRATION_MAPPING_SYNC) {
+      ingestIdentityMigration(waMessage.key, protocolMessage.lidMigrationMappingSyncMessage);
+      return;
+    }
     const operationId = waMessage.key.id;
     const targetId = protocolMessage.key?.id;
     if (!operationId || !targetId) {
@@ -215,6 +219,24 @@ export function createIngest({ store, logger, getAccount }: CreateIngestParams):
       by,
       editedAt: editTime(protocolMessage, waMessage)
     });
+  }
+
+  // Baileys stores these pairs without emitting lid-mapping.update, and accepts them only from the account's own devices
+  function ingestIdentityMigration(
+    key: WAMessageKey,
+    sync: proto.ILIDMigrationMappingSyncMessage | null | undefined
+  ): void {
+    const payload = sync?.encodedMappingPayload;
+    if (key.fromMe !== true || !payload) {
+      return;
+    }
+    for (const { pn, assignedLid, latestLid } of proto.LIDMigrationMappingSyncPayload.decode(payload).pnToLidMappings) {
+      let lid = assignedLid;
+      if (latestLid) {
+        lid = latestLid;
+      }
+      learnPair(`${String(lid)}@lid`, `${String(pn)}@s.whatsapp.net`);
+    }
   }
 
   function ingestEncryptedEdit(
