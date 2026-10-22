@@ -264,9 +264,9 @@ Each Baileys capability that an embedding application needs, and the part of thi
 | `messages.upsert`                                                                                         | `message` event (REQ-EVT-007)                                           |
 | Edits from `messages.upsert`, including `secretEncryptedMessage`                                          | `message_edited` event (REQ-EVT-008)                                    |
 | Deletes (REVOKE protocol messages in `messages.upsert`)                                                   | `message_deleted` event (REQ-EVT-009)                                   |
-| `messages.reaction`                                                                                       | `reaction` event (REQ-EVT-010)                                          |
+| Reaction messages in `messages.upsert`                                                                    | `reaction` event (REQ-EVT-010)                                          |
 | Poll votes (`decryptPollVote`)                                                                            | `poll_vote` event (REQ-EVT-011)                                         |
-| `message-receipt.update`, status in `messages.update`                                                     | `receipt` event (REQ-EVT-012)                                           |
+| `message-receipt.update`, `messages.update` status, receipts folded into a buffered message               | `receipt` event (REQ-EVT-012)                                           |
 | LID mapping (`getLIDForPN`, `getPNForLID`, `lid-mapping.update`)                                          | `Participant` fields, `identity_mapped` event (REQ-ID-001, REQ-EVT-013) |
 | `downloadMediaMessage` with media re-upload                                                               | `download_media` (REQ-MEDIA-001 to 003)                                 |
 | `groupFetchAllParticipating`                                                                              | `list_chats` (REQ-READ-001)                                             |
@@ -316,6 +316,7 @@ Each Baileys capability that an embedding application needs, and the part of thi
 | DEC-019 | provisional, 2026-10-22 | `mark_read` with any target that is not stored returns `unknown_message` with the unknown ids and sends no receipt.                                                                                                                                                                                                                                                                          |
 | DEC-020 | provisional, 2026-10-22 | Audio, voice notes, and stickers take no caption, and `mentions` applies only to text, image, video, GIF, and poll content. The other WhatsApp message types have no caption or text for a mention to point into.                                                                                                                                                                            |
 | DEC-021 | provisional, 2026-10-22 | `/mcp` accepts request bodies up to 10 MiB of media as base64 plus 1 MiB, about 14.3 MiB, so `send_message` can carry the media REQ-MEDIA-004 allows. The MCP SDK's default limit is 4 MiB.                                                                                                                                                                                                  |
+| DEC-022 | provisional, 2026-10-22 | Reactions come from the reaction message in `messages.upsert`, not from `messages.reaction`. Baileys emits `messages.reaction` only while it processes that upsert, and its event buffer folds the event into a target message that the buffer still holds.                                                                                                                                  |
 
 ## Risks
 

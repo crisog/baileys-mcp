@@ -3,7 +3,6 @@ import type {
   LIDMapping,
   WAMessage,
   WAMessageKey,
-  BaileysEventMap,
   WAMessageUpdate,
   MessageUserReceiptUpdate
 } from '@whiskeysockets/baileys';
@@ -34,8 +33,6 @@ export type Account = {
   name: string | null;
 };
 
-type Reaction = BaileysEventMap['messages.reaction'][number];
-
 type CreateIngestParams = {
   store: Store;
   logger: Logger;
@@ -46,7 +43,6 @@ interface Ingest {
   messages(messages: WAMessage[]): void;
   statusUpdates(updates: WAMessageUpdate[]): void;
   receipts(updates: MessageUserReceiptUpdate[]): void;
-  reactions(reactions: Reaction[]): void;
   identity(mapping: LIDMapping): void;
 }
 
@@ -142,8 +138,12 @@ export function createIngest({ store, logger, getAccount }: CreateIngestParams):
       ingestPollVote(waMessage, content.pollUpdateMessage, chatJid);
       return;
     }
-    // Baileys emits messages.reaction for every reaction envelope
-    if (content.reactionMessage || getContentType(content) === undefined) {
+    // Baileys also emits messages.reaction, but its event buffer folds that event into a target message it still holds
+    if (content.reactionMessage) {
+      ingestReaction(waMessage, content.reactionMessage, chatJid);
+      return;
+    }
+    if (getContentType(content) === undefined) {
       return;
     }
 
@@ -167,6 +167,11 @@ export function createIngest({ store, logger, getAccount }: CreateIngestParams):
       raw: proto.WebMessageInfo.encode(waMessage).finish(),
       messageSecret
     });
+    // The event buffer folds a receipt for a message it still holds into the message and emits no receipt event
+    ingestStatusUpdate({ key, update: { status: waMessage.status } });
+    for (const receipt of waMessage.userReceipt ?? []) {
+      ingestReceipt({ key, receipt });
+    }
   }
 
   function ingestProtocolMessage(
@@ -329,10 +334,10 @@ export function createIngest({ store, logger, getAccount }: CreateIngestParams):
     });
   }
 
-  function ingestReaction({ key, reaction }: Reaction): void {
-    const chatJid = jidNormalizedUser(key.remoteJid ?? '');
-    const reactionKey = reaction.key;
-    if (!key.id || !reactionKey?.id || !isChat(chatJid)) {
+  function ingestReaction(waMessage: WAMessage, reaction: proto.Message.IReactionMessage, chatJid: string): void {
+    const reactionId = waMessage.key.id;
+    const targetId = reaction.key?.id;
+    if (!reactionId || !targetId) {
       return;
     }
     let emoji: string | null = null;
@@ -342,12 +347,12 @@ export function createIngest({ store, logger, getAccount }: CreateIngestParams):
     store.recordEvent({
       body: {
         type: 'reaction',
-        target: { chat: chatJid, id: key.id },
-        reactor: senderOf(reactionKey, null),
+        target: { chat: chatJid, id: targetId },
+        reactor: senderOf(waMessage.key, waMessage.pushName ?? null),
         emoji
       },
       chatJid,
-      factKey: `reaction:${chatJid}:${reactionKey.id}`
+      factKey: `reaction:${chatJid}:${reactionId}`
     });
   }
 
@@ -373,18 +378,17 @@ export function createIngest({ store, logger, getAccount }: CreateIngestParams):
     if (key.fromMe !== true || !key.id || !receipt.userJid || !isChat(chatJid)) {
       return;
     }
-    let state: ReceiptState;
-    if (receipt.playedTimestamp) {
-      state = 'played';
-    } else if (receipt.readTimestamp) {
-      state = 'read';
-    } else if (receipt.receiptTimestamp) {
-      state = 'delivered';
-    } else {
-      return;
-    }
     const participant = store.participantFor(jidNormalizedUser(receipt.userJid), null);
-    recordReceipt({ chatJid, id: key.id, participant, state });
+    // The event buffer merges the receipts of one participant into one entry, so each timestamp is its own receipt
+    if (receipt.receiptTimestamp) {
+      recordReceipt({ chatJid, id: key.id, participant, state: 'delivered' });
+    }
+    if (receipt.readTimestamp) {
+      recordReceipt({ chatJid, id: key.id, participant, state: 'read' });
+    }
+    if (receipt.playedTimestamp) {
+      recordReceipt({ chatJid, id: key.id, participant, state: 'played' });
+    }
   }
 
   function recordReceipt({ chatJid, id, participant, state }: RecordReceiptParams): void {
@@ -424,9 +428,6 @@ export function createIngest({ store, logger, getAccount }: CreateIngestParams):
     },
     receipts(updates) {
       forEachItem(updates, ingestReceipt, ({ key }) => describeKey('receipt', key));
-    },
-    reactions(reactions) {
-      forEachItem(reactions, ingestReaction, ({ key }) => describeKey('reaction', key));
     },
     identity(mapping) {
       forEachItem(

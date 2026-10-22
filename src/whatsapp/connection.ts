@@ -270,9 +270,6 @@ export async function createWhatsAppConnection({
     current.ev.on('message-receipt.update', (updates) => {
       ingest.receipts(updates);
     });
-    current.ev.on('messages.reaction', (reactions) => {
-      ingest.reactions(reactions);
-    });
     current.ev.on('lid-mapping.update', (mapping) => {
       ingest.identity(mapping);
     });
