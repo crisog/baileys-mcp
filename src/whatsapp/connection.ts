@@ -259,6 +259,10 @@ export async function createWhatsAppConnection({
       });
     });
     current.ev.on('connection.update', (update) => {
+      // Baileys destroys the event buffer right after the close, and it has already acknowledged the messages it holds
+      if (update.connection === 'close') {
+        current.ev.flush();
+      }
       handleConnectionUpdate(current, update);
     });
     current.ev.on('messages.upsert', ({ messages }) => {
@@ -359,7 +363,7 @@ export async function createWhatsAppConnection({
     clearTimeout(reconnectTimer);
     reconnectTimer = undefined;
     const current = socket;
-    // Clearing the socket first makes its close event a no-op
+    // Clearing the socket first keeps its close event from changing the state or reconnecting
     socket = null;
     pairing = null;
     await current?.end(undefined);
