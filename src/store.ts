@@ -352,10 +352,13 @@ export function createStore(database: DatabaseSync): Store {
 
   // Returns true when the event is new; a repeated fact_key records nothing
   function insertEvent({ body, chatJid, factKey }: RecordEventParams): boolean {
-    const result = database
+    // An INSERT that ON CONFLICT skips still takes an AUTOINCREMENT value, which would leave a gap in the cursors
+    if (factKey !== null && hasEvent(factKey)) {
+      return false;
+    }
+    database
       .prepare(
-        `INSERT INTO events (at, type, chat_jid, fact_key, payload) VALUES (:at, :type, :chat_jid, :fact_key, :payload)
-         ON CONFLICT (fact_key) DO NOTHING`
+        'INSERT INTO events (at, type, chat_jid, fact_key, payload) VALUES (:at, :type, :chat_jid, :fact_key, :payload)'
       )
       .run({
         at: new Date().toISOString(),
@@ -364,7 +367,12 @@ export function createStore(database: DatabaseSync): Store {
         fact_key: factKey,
         payload: JSON.stringify(body)
       });
-    return Number(result.changes) === 1;
+    return true;
+  }
+
+  function hasEvent(factKey: string): boolean {
+    const row = database.prepare('SELECT EXISTS (SELECT 1 FROM events WHERE fact_key = ?) AS value').get(factKey);
+    return integerRowSchema.parse(row).value === 1;
   }
 
   function findPhoneForLid(lidJid: string): string | null {
