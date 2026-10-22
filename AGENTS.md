@@ -6,6 +6,7 @@ This file is for coding agents. `README.md` is for people running the server.
 
 baileys-mcp is an MCP server that gives AI agents access to one WhatsApp account through Baileys. Clients connect over Streamable HTTP at `/mcp`. The server runs as one long-lived process, because a second Baileys connection with the same credentials disconnects the first.
 
+- `SPEC.md` defines the tools, their schemas, and the server behavior behind them. Read it before you add or change a tool, and cite its `REQ-*` IDs in the change.
 - Build the server and its tools with `@modelcontextprotocol/sdk`, and define every tool's input and output schema with `zod`.
 - Node runs the TypeScript in `src` directly through its built-in type stripping, so there is no build step and no `dist`.
 
