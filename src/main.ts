@@ -14,6 +14,15 @@ const DAY_MS = 24 * 60 * 60 * 1_000;
 const SEND_LEDGER_RETENTION_DAYS = 7;
 
 const logger = pino();
+const consoleLogger = logger.child({ component: 'console' });
+// libsignal prints whole Signal sessions, private keys included, through the console, so only a message string passes
+for (const method of ['debug', 'error', 'info', 'log', 'warn'] as const) {
+  console[method] = (message: unknown): void => {
+    if (typeof message === 'string') {
+      consoleLogger.debug(message);
+    }
+  };
+}
 const config = parseConfig(process.env);
 
 const { database, appliedMigrations } = openDatabase(config.DATA_DIR);
