@@ -20,6 +20,7 @@ Set these environment variables. The server does not start when a required one i
 | `OPERATOR_GITHUB_ID`   | yes      | The operator's numeric GitHub user ID (`gh api user --jq .id`). No other GitHub account can sign in.                                                                               |
 | `PORT`                 | no       | The listen port. The default is `3000`.                                                                                                                                            |
 | `RETENTION_DAYS`       | no       | The number of days the server keeps stored messages and events. The default is `30`.                                                                                               |
+| `CLIENT_IP_HEADER`     | no       | Set it behind a reverse proxy, to a header the proxy overwrites with the client address, such as `x-real-ip`. Unset, the rate limits count the TCP peer, which is then the proxy.  |
 
 Create the GitHub OAuth app with the authorization callback URL `${PUBLIC_BASE_URL}/api/auth/callback/github`.
 

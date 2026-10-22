@@ -65,6 +65,7 @@ const auth = createAuth({ config, database, logger });
 const handleRequest = createRequestHandler({
   auth,
   mcpResource: getMcpResource(config.PUBLIC_BASE_URL),
+  clientIpHeader: config.CLIENT_IP_HEADER,
   logger,
   tools: { store, whatsapp, logger }
 });

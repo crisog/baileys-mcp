@@ -16,6 +16,8 @@ export const AUTH_BASE_PATH = '/api/auth';
 export const WHATSAPP_SCOPE = 'whatsapp';
 export const SIGN_IN_PATH = '/sign-in';
 export const CONSENT_PATH = '/consent';
+// The HTTP layer sets this header on every request it passes to Better Auth and drops any value a client sent
+export const RESOLVED_CLIENT_IP_HEADER = 'x-baileys-mcp-client-ip';
 
 const githubProfileSchema = z.object({ id: z.number() });
 
@@ -40,6 +42,8 @@ export function createAuth({ config, database, logger }: CreateAuthParams) {
     database,
     // Better Auth enables rate limiting only when NODE_ENV is production; the plugin limits must always apply
     rateLimit: { enabled: true },
+    // Better Auth keys rate limits by this client IP, so it must not read a forwarded header that a client can send
+    advanced: { ipAddress: { ipAddressHeaders: [RESOLVED_CLIENT_IP_HEADER] } },
     logger: {
       log: (level, message, ...details: unknown[]) => {
         logger[level]({ component: 'better-auth', details: details.map(serializeDetail) }, message);
