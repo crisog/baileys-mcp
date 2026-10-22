@@ -18,6 +18,8 @@ Node and npm are pinned, and `.npmrc` sets `engine-strict`, so run `nvm use` bef
 
 `npm run verify` is the complete gate: formatting, lint, typecheck, unused code, and the production dependency audit. CI runs the same command. The pre-commit hook runs lint-staged on the staged files.
 
+To run the server and drive it through its public surface, for a bug bash or a manual check, follow `DRIVER.md`.
+
 Fix a failing check at its cause. Change a rule in `oxlint.config.ts` only when the rule itself is wrong for this project.
 
 ## Code
