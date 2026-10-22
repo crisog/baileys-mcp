@@ -11,6 +11,7 @@ import { createWhatsAppConnection } from './whatsapp/connection.ts';
 
 const RETENTION_INTERVAL_MS = 60 * 60 * 1_000;
 const DAY_MS = 24 * 60 * 60 * 1_000;
+const SEND_LEDGER_RETENTION_DAYS = 7;
 
 const logger = pino();
 const config = parseConfig(process.env);
@@ -21,6 +22,10 @@ for (const migration of appliedMigrations) {
 }
 
 const store = createStore(database);
+const interruptedSends = store.markInterruptedSends();
+if (interruptedSends > 0) {
+  logger.warn({ sends: interruptedSends }, 'marked sends that the previous process left unfinished as ambiguous');
+}
 const whatsapp = await createWhatsAppConnection({
   authDirectory: join(config.DATA_DIR, 'whatsapp-auth'),
   store,
@@ -28,9 +33,21 @@ const whatsapp = await createWhatsAppConnection({
 });
 
 function deleteExpiredRecords(): void {
-  const cutoff = new Date(Date.now() - config.RETENTION_DAYS * DAY_MS).toISOString();
+  const now = Date.now();
+  const cutoff = new Date(now - config.RETENTION_DAYS * DAY_MS).toISOString();
+  const sendLedgerCutoff = new Date(now - SEND_LEDGER_RETENTION_DAYS * DAY_MS).toISOString();
   const deleted = store.deleteRecordedBefore(cutoff);
-  logger.info({ messages_deleted: deleted.messages, events_deleted: deleted.events, cutoff }, 'applied retention');
+  const sendsDeleted = store.deleteSendsBefore(sendLedgerCutoff);
+  logger.info(
+    {
+      messages_deleted: deleted.messages,
+      events_deleted: deleted.events,
+      sends_deleted: sendsDeleted,
+      cutoff,
+      send_ledger_cutoff: sendLedgerCutoff
+    },
+    'applied retention'
+  );
 }
 deleteExpiredRecords();
 const retentionTimer = setInterval(deleteExpiredRecords, RETENTION_INTERVAL_MS);

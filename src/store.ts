@@ -160,7 +160,10 @@ type Event = z.infer<typeof eventSchema>;
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 type EventBody = DistributiveOmit<Event, 'cursor' | 'at'>;
 
+const LEDGER_OUTCOMES = ['sending', 'sent', 'ambiguous'] as const;
+
 const storedMessageRowSchema = z.object({
+  chat_jid: z.string(),
   message: z.string(),
   raw: z.instanceof(Uint8Array),
   message_secret: z.instanceof(Uint8Array).nullable()
@@ -182,8 +185,14 @@ const jidRowSchema = z.object({ jid: z.string() });
 const nameRowSchema = z.object({ name: z.string().nullable() });
 const cursorRowSchema = z.object({ cursor: z.number().int().nullable() });
 const integerRowSchema = z.object({ value: z.number().int() });
+const sendRowSchema = z.object({
+  chat_jid: z.string(),
+  message_id: z.string(),
+  outcome: z.enum(LEDGER_OUTCOMES)
+});
 
 export type StoredMessage = {
+  chatJid: string;
   message: Message;
   raw: Uint8Array;
   messageSecret: Uint8Array | null;
@@ -276,6 +285,26 @@ type DeletedCounts = {
   events: number;
 };
 
+export type SendTool = 'send_message' | 'edit_message' | 'react_to_message';
+
+export type SendRecord = {
+  chatJid: string;
+  messageId: string;
+  outcome: (typeof LEDGER_OUTCOMES)[number];
+};
+
+type ReserveSendParams = {
+  idempotencyKey: string;
+  tool: SendTool;
+  chatJid: string;
+  messageId: string;
+};
+
+type FinishSendParams = {
+  idempotencyKey: string;
+  outcome: 'sent' | 'ambiguous';
+};
+
 export interface Store {
   recordMessage(params: RecordMessageParams): void;
   recordEvent(params: RecordEventParams): void;
@@ -296,6 +325,13 @@ export interface Store {
   cursorBefore(at: string): number;
   waitForEvent(params: WaitForEventParams): Promise<void>;
   deleteRecordedBefore(cutoff: string): DeletedCounts;
+  findSend(idempotencyKey: string): SendRecord | null;
+  reserveSend(params: ReserveSendParams): boolean;
+  finishSend(params: FinishSendParams): void;
+  releaseSend(idempotencyKey: string): void;
+  markInterruptedSends(): number;
+  hasReceipt(messageId: string): boolean;
+  deleteSendsBefore(cutoff: string): number;
 }
 
 export function createStore(database: DatabaseSync): Store {
@@ -565,7 +601,7 @@ export function createStore(database: DatabaseSync): Store {
     findMessage({ chatJid, id }) {
       const row = database
         .prepare(
-          `SELECT message, raw, message_secret FROM messages
+          `SELECT chat_jid, message, raw, message_secret FROM messages
            WHERE chat_jid IN (SELECT value FROM json_each(:chat_jids)) AND id = :id`
         )
         .get({ chat_jids: JSON.stringify(aliasesOf(chatJid)), id });
@@ -574,6 +610,7 @@ export function createStore(database: DatabaseSync): Store {
       }
       const stored = storedMessageRowSchema.parse(row);
       return {
+        chatJid: stored.chat_jid,
         message: parseMessageJson(stored.message),
         raw: stored.raw,
         messageSecret: stored.message_secret
@@ -760,6 +797,73 @@ export function createStore(database: DatabaseSync): Store {
         messages: Number(messages.changes),
         events: Number(events.changes)
       };
+    },
+
+    findSend(idempotencyKey) {
+      const row = database
+        .prepare('SELECT chat_jid, message_id, outcome FROM send_ledger WHERE idempotency_key = ?')
+        .get(idempotencyKey);
+      if (row === undefined) {
+        return null;
+      }
+      const send = sendRowSchema.parse(row);
+      return {
+        chatJid: send.chat_jid,
+        messageId: send.message_id,
+        outcome: send.outcome
+      };
+    },
+
+    // Returns false when the key already has an entry, so at most one call sends for it
+    reserveSend({ idempotencyKey, tool, chatJid, messageId }) {
+      const result = database
+        .prepare(
+          `INSERT INTO send_ledger (idempotency_key, tool, chat_jid, message_id, outcome, created_at)
+           VALUES (:idempotency_key, :tool, :chat_jid, :message_id, 'sending', :created_at)
+           ON CONFLICT (idempotency_key) DO NOTHING`
+        )
+        .run({
+          idempotency_key: idempotencyKey,
+          tool,
+          chat_jid: chatJid,
+          message_id: messageId,
+          created_at: new Date().toISOString()
+        });
+      return Number(result.changes) === 1;
+    },
+
+    finishSend({ idempotencyKey, outcome }) {
+      database
+        .prepare('UPDATE send_ledger SET outcome = :outcome WHERE idempotency_key = :idempotency_key')
+        .run({ outcome, idempotency_key: idempotencyKey });
+    },
+
+    // Frees the key of a send that never reached WhatsApp, so a retry may send
+    releaseSend(idempotencyKey) {
+      database.prepare('DELETE FROM send_ledger WHERE idempotency_key = ?').run(idempotencyKey);
+    },
+
+    // A send still marked sending at startup was cut off by the previous process, and may have reached WhatsApp
+    markInterruptedSends() {
+      const result = database.prepare("UPDATE send_ledger SET outcome = 'ambiguous' WHERE outcome = 'sending'").run();
+      return Number(result.changes);
+    },
+
+    // Message ids are random, so the id alone names the message whatever JID its chat was addressed by
+    hasReceipt(messageId) {
+      const row = database
+        .prepare(
+          `SELECT EXISTS (
+             SELECT 1 FROM events WHERE type = 'receipt' AND json_extract(payload, '$.target.id') = ?
+           ) AS value`
+        )
+        .get(messageId);
+      return integerRowSchema.parse(row).value === 1;
+    },
+
+    deleteSendsBefore(cutoff) {
+      const result = database.prepare('DELETE FROM send_ledger WHERE created_at < ?').run(cutoff);
+      return Number(result.changes);
     }
   };
 }

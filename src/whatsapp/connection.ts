@@ -1,10 +1,12 @@
 import type { Logger } from 'pino';
 import type {
   proto,
-  WAMessageKey,
   WASocket,
-  ConnectionState as BaileysConnectionState,
-  AuthenticationState
+  WAMessage,
+  WAMessageKey,
+  AnyMessageContent,
+  AuthenticationState,
+  ConnectionState as BaileysConnectionState
 } from '@whiskeysockets/baileys';
 
 import { z } from 'zod';
@@ -14,13 +16,15 @@ import { makeWASocket, DisconnectReason, jidNormalizedUser, useMultiFileAuthStat
 import type { Account } from './ingest.ts';
 import type { Store, LastDisconnect, ConnectionState } from '../store.ts';
 
-import { createIngest } from './ingest.ts';
+import { maskJid, createIngest } from './ingest.ts';
 import { decodeStoredMessage } from './normalize.ts';
 
 const RECONNECT_DELAY_BASE_MS = 1_000;
 const RECONNECT_DELAY_MAX_MS = 30_000;
 const RECONNECT_EXPONENT_MAX = 5;
 const PAIRING_START_TIMEOUT_MS = 20_000;
+const SEND_TIMEOUT_MS = 60_000;
+const TYPING_REFRESH_INTERVAL_MS = 10_000;
 const AUTH_DIRECTORY_MODE = 0o700;
 // Baileys puts JIDs, protocol nodes, and message keys in these fields of its warn and error lines
 const BAILEYS_REDACTED_FIELDS = [
@@ -63,12 +67,42 @@ type PairOutcome =
   | { kind: 'not_allowed'; message: string }
   | { kind: 'not_connected' };
 
+type SendRequest = {
+  jid: string;
+  messageId: string;
+  content: AnyMessageContent;
+  quoted: WAMessage | undefined;
+};
+
+type SendOutcome =
+  | { kind: 'sent' }
+  | { kind: 'timed_out' }
+  | { kind: 'failed'; error: unknown }
+  | { kind: 'not_connected' };
+
+type Presence = 'composing' | 'paused';
+
+type TypingRequest = {
+  chatJid: string;
+  presence: Presence;
+  ttlMs: number;
+};
+
+type TypingOutcome = { kind: 'set' } | { kind: 'not_connected' };
+
+type TypingTimers = {
+  refresh: NodeJS.Timeout;
+  expiry: NodeJS.Timeout;
+};
+
 export interface WhatsAppConnection {
   start(): void;
   stop(): Promise<void>;
   getStatus(): ConnectionStatus;
   getOpenSocket(): WASocket | null;
   pair(request: PairRequest): Promise<PairOutcome>;
+  send(request: SendRequest): Promise<SendOutcome>;
+  setTyping(request: TypingRequest): Promise<TypingOutcome>;
 }
 
 type Auth = {
@@ -105,6 +139,7 @@ export async function createWhatsAppConnection({
   let reconnectAttempt = 0;
   let reconnectTimer: NodeJS.Timeout | undefined;
   let isPairing = false;
+  const typingByChat = new Map<string, TypingTimers>();
   const ingest = createIngest({ store, logger, getAccount });
 
   async function loadAuth(): Promise<Auth> {
@@ -251,6 +286,7 @@ export async function createWhatsAppConnection({
   function handleClose(disconnect: BaileysConnectionState['lastDisconnect']): void {
     socket = null;
     pairing = null;
+    clearAllTyping();
     const code = statusCodeOf(disconnect?.error);
     lastDisconnect = {
       code,
@@ -296,6 +332,55 @@ export async function createWhatsAppConnection({
     await Promise.allSettled(pendingWrites);
   }
 
+  function getOpenSocket(): WASocket | null {
+    if (state !== 'open') {
+      return null;
+    }
+    return socket;
+  }
+
+  // Indicators are keyed by the phone JID when known, so a send to either JID of a DM stops its indicator
+  function typingJidOf(jid: string): string {
+    return store.resolveJid(jidNormalizedUser(jid));
+  }
+
+  // Returns true when the chat had a typing indicator
+  function clearTyping(chatJid: string): boolean {
+    const timers = typingByChat.get(chatJid);
+    if (timers === undefined) {
+      return false;
+    }
+    clearInterval(timers.refresh);
+    clearTimeout(timers.expiry);
+    typingByChat.delete(chatJid);
+    return true;
+  }
+
+  function clearAllTyping(): void {
+    for (const chatJid of [...typingByChat.keys()]) {
+      clearTyping(chatJid);
+    }
+  }
+
+  // Typing indicators are best effort: a failure is logged, and the returned promise never rejects
+  async function sendPresence(presence: Presence, chatJid: string): Promise<void> {
+    const current = getOpenSocket();
+    if (current === null) {
+      return;
+    }
+    try {
+      await current.sendPresenceUpdate(presence, chatJid);
+    } catch (error) {
+      logger.warn({ err: error, chat: maskJid(chatJid), presence }, 'failed to send a typing indicator');
+    }
+  }
+
+  async function stopTyping(chatJid: string): Promise<void> {
+    if (clearTyping(chatJid)) {
+      await sendPresence('paused', chatJid);
+    }
+  }
+
   async function restartPairing(request: PairRequest): Promise<PairOutcome> {
     await endSocket();
     // Unlinked or logged-out credentials hold nothing worth keeping
@@ -329,6 +414,7 @@ export async function createWhatsAppConnection({
     },
 
     async stop() {
+      await Promise.all([...typingByChat.keys()].map(stopTyping));
       await endSocket();
       setState('closed');
     },
@@ -347,12 +433,7 @@ export async function createWhatsAppConnection({
       };
     },
 
-    getOpenSocket() {
-      if (state !== 'open') {
-        return null;
-      }
-      return socket;
-    },
+    getOpenSocket,
 
     async pair(request) {
       if (state === 'open') {
@@ -371,6 +452,64 @@ export async function createWhatsAppConnection({
       } finally {
         isPairing = false;
       }
+    },
+
+    async send({ jid, messageId, content, quoted }) {
+      const current = getOpenSocket();
+      if (current === null) {
+        return { kind: 'not_connected' };
+      }
+      // The paused indicator is best effort, so the send does not wait for it
+      stopTyping(typingJidOf(jid));
+      const sending = current.sendMessage(jid, content, { messageId, quoted }).then(
+        (message): SendOutcome => {
+          // Baileys also echoes the sent message later; recording it now lets the next call reply to it or edit it
+          if (message !== undefined) {
+            ingest.messages([message]);
+          }
+          return { kind: 'sent' };
+        },
+        (error: unknown): SendOutcome => ({ kind: 'failed', error })
+      );
+      let timer: NodeJS.Timeout | undefined;
+      const timeout = new Promise<SendOutcome>((resolve) => {
+        timer = setTimeout(() => {
+          resolve({ kind: 'timed_out' });
+        }, SEND_TIMEOUT_MS);
+      });
+      const outcome = await Promise.race([sending, timeout]);
+      clearTimeout(timer);
+      if (outcome.kind === 'timed_out') {
+        // The close event of the stalled socket takes the normal reconnect path
+        current.end(new Error(`A send did not finish within ${SEND_TIMEOUT_MS} ms`)).catch((error: unknown) => {
+          logger.warn({ err: error }, 'failed to end the stalled WhatsApp socket');
+        });
+      }
+      return outcome;
+    },
+
+    async setTyping({ chatJid, presence, ttlMs }) {
+      const current = getOpenSocket();
+      if (current === null) {
+        return { kind: 'not_connected' };
+      }
+      const typingJid = typingJidOf(chatJid);
+      clearTyping(typingJid);
+      try {
+        await current.sendPresenceUpdate(presence, typingJid);
+      } catch (error) {
+        logger.warn({ err: error, chat: maskJid(typingJid), presence }, 'failed to send a typing indicator');
+        return { kind: 'not_connected' };
+      }
+      if (presence === 'composing') {
+        // A concurrent call for the same chat may have set timers while this one waited
+        clearTyping(typingJid);
+        typingByChat.set(typingJid, {
+          refresh: setInterval(() => sendPresence('composing', typingJid), TYPING_REFRESH_INTERVAL_MS),
+          expiry: setTimeout(() => stopTyping(typingJid), ttlMs)
+        });
+      }
+      return { kind: 'set' };
     }
   };
 }

@@ -575,7 +575,7 @@ function describeKey(event: string, key: WAMessageKey): object {
 }
 
 // Logs keep the server and the last four digits, never a whole phone number
-function maskJid(jid: string): string {
+export function maskJid(jid: string): string {
   const separator = jid.indexOf('@');
   return `…${jid.slice(Math.max(0, separator - 4))}`;
 }

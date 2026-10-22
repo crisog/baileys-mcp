@@ -1,11 +1,14 @@
+import type { Logger } from 'pino';
+import type { WAMessage } from '@whiskeysockets/baileys';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 import { z } from 'zod';
 
 import type { ToolError } from './results.ts';
-import type { StoredMessage } from '../store.ts';
 import type { ToolServices } from './register.ts';
+import type { Store, Message, StoredMessage } from '../store.ts';
+import type { WhatsAppConnection } from '../whatsapp/connection.ts';
 
 import { toolError, notConnectedError } from './results.ts';
 import { downloadMedia, MEDIA_SIZE_MAX_BYTES } from '../whatsapp/media.ts';
@@ -13,9 +16,9 @@ import { decodeMediaId, decodeStoredMessage } from '../whatsapp/normalize.ts';
 
 const MEDIA_ID_LENGTH_MAX = 1_024;
 
-const downloadMediaInputSchema = z.object({
-  media_id: z.string().min(1).max(MEDIA_ID_LENGTH_MAX).describe('The media_id of a stored message')
-});
+export const mediaIdSchema = z.string().min(1).max(MEDIA_ID_LENGTH_MAX).describe('The media_id of a stored message');
+
+const downloadMediaInputSchema = z.object({ media_id: mediaIdSchema });
 
 const downloadMediaOutputSchema = z.object({
   media_id: z.string(),
@@ -32,6 +35,19 @@ type MediaBlockParams = {
   data: string;
 };
 
+type StoredMediaLookup =
+  | { kind: 'found'; message: WAMessage; media: NonNullable<Message['media']> }
+  | { kind: 'error'; error: ToolError };
+
+type FetchStoredMediaParams = {
+  message: WAMessage;
+  media: NonNullable<Message['media']>;
+  whatsapp: WhatsAppConnection;
+  logger: Logger;
+};
+
+type StoredMediaBytes = { kind: 'downloaded'; bytes: Buffer } | { kind: 'error'; error: ToolError };
+
 export function registerMediaTool(server: McpServer, { store, whatsapp, logger }: ToolServices): void {
   server.registerTool(
     'download_media',
@@ -43,40 +59,14 @@ export function registerMediaTool(server: McpServer, { store, whatsapp, logger }
       annotations: { readOnlyHint: true }
     },
     async ({ media_id }) => {
-      const key = decodeMediaId(media_id);
-      let stored: StoredMessage | null = null;
-      if (key !== null) {
-        stored = store.findMessage(key);
+      const lookup = findStoredMedia(store, media_id);
+      if (lookup.kind === 'error') {
+        return toolError(lookup.error);
       }
-      const media = stored?.message.media;
-      if (stored === null || media === null || media === undefined) {
-        return toolError({
-          code: 'unknown_message',
-          message: 'No stored message has this media_id.',
-          retryable: false
-        });
-      }
-      if (media.size_bytes !== null && media.size_bytes > MEDIA_SIZE_MAX_BYTES) {
-        return toolError(tooLargeError(media.size_bytes));
-      }
-
-      const download = await downloadMedia({
-        message: decodeStoredMessage(stored.raw),
-        getOpenSocket: whatsapp.getOpenSocket,
-        logger
-      });
-      if (download.kind === 'too_large') {
-        return toolError(tooLargeError(media.size_bytes));
-      }
-      if (download.kind === 'not_connected') {
-        return toolError(notConnectedError);
-      }
-      if (download.kind === 'unavailable') {
-        return toolError({
-          code: 'media_unavailable',
-          message: 'WhatsApp no longer holds this media and the sender did not upload it again.',
-          retryable: false
-        });
+      const { media } = lookup;
+      const download = await fetchStoredMedia({ message: lookup.message, media, whatsapp, logger });
+      if (download.kind === 'error') {
+        return toolError(download.error);
       }
 
       const result = {
@@ -96,8 +86,57 @@ export function registerMediaTool(server: McpServer, { store, whatsapp, logger }
   );
 }
 
+export function findStoredMedia(store: Store, mediaId: string): StoredMediaLookup {
+  const key = decodeMediaId(mediaId);
+  let stored: StoredMessage | null = null;
+  if (key !== null) {
+    stored = store.findMessage(key);
+  }
+  const media = stored?.message.media;
+  if (stored === null || media === null || media === undefined) {
+    return {
+      kind: 'error',
+      error: { code: 'unknown_message', message: 'No stored message has this media_id.', retryable: false }
+    };
+  }
+  if (media.size_bytes !== null && media.size_bytes > MEDIA_SIZE_MAX_BYTES) {
+    return { kind: 'error', error: tooLargeError(media.size_bytes) };
+  }
+  return {
+    kind: 'found',
+    message: decodeStoredMessage(stored.raw),
+    media
+  };
+}
+
+export async function fetchStoredMedia({
+  message,
+  media,
+  whatsapp,
+  logger
+}: FetchStoredMediaParams): Promise<StoredMediaBytes> {
+  const download = await downloadMedia({ message, getOpenSocket: whatsapp.getOpenSocket, logger });
+  if (download.kind === 'too_large') {
+    return { kind: 'error', error: tooLargeError(media.size_bytes) };
+  }
+  if (download.kind === 'not_connected') {
+    return { kind: 'error', error: notConnectedError };
+  }
+  if (download.kind === 'unavailable') {
+    return {
+      kind: 'error',
+      error: {
+        code: 'media_unavailable',
+        message: 'WhatsApp no longer holds this media and the sender did not upload it again.',
+        retryable: false
+      }
+    };
+  }
+  return { kind: 'downloaded', bytes: download.bytes };
+}
+
 // The stored size is unknown when the sender omitted it and the download passed the limit
-function tooLargeError(sizeBytes: number | null): ToolError {
+export function tooLargeError(sizeBytes: number | null): ToolError {
   const message = `The media is larger than the ${MEDIA_SIZE_MAX_BYTES} byte limit.`;
   if (sizeBytes === null) {
     return { code: 'media_too_large', message, retryable: false };

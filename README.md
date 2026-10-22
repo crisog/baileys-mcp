@@ -2,7 +2,7 @@
 
 An [MCP](https://modelcontextprotocol.io) server that gives AI agents access to a WhatsApp account through [Baileys](https://github.com/WhiskeySockets/Baileys), served over Streamable HTTP.
 
-The server serves MCP at `/mcp` behind OAuth. It is its own authorization server: MCP clients discover it from the `/mcp` URL, and the operator signs in with GitHub and approves each client. The tools read the connection status, pair the account, list chats and stored messages, pull inbound events, and download media.
+The server serves MCP at `/mcp` behind OAuth. It is its own authorization server: MCP clients discover it from the `/mcp` URL, and the operator signs in with GitHub and approves each client. The tools read the connection status, pair the account, list chats and stored messages, pull inbound events, download media, send messages, edit and react to them, mark them read, and show the typing indicator.
 
 Baileys is an unofficial WhatsApp Web client. WhatsApp can change its protocol or restrict an account that uses it, so link a dedicated number.
 
@@ -36,6 +36,16 @@ npm start
 ## Link the phone
 
 On its first start the server begins QR pairing. Call `get_status` and render its `pairing.qr` string as a QR code, then scan it on the phone under Linked devices. To link with a code instead, call `pair` with `method: "code"` and the phone number in E.164 form, then enter the returned code on the phone. When WhatsApp logs the account out, `get_status` reports `logged_out` and `pair` links the phone again.
+
+## Send messages
+
+`send_message`, `edit_message`, and `react_to_message` require an `idempotency_key`. A repeated call with the same key returns the first outcome and sends nothing, so a client can retry a call safely. The server keeps each key for 7 days.
+
+When a send does not finish within 60 s, the result is `status: "ambiguous"` with the message id, and the server reconnects to WhatsApp. The server never sends that message again: a later call with the same key returns `send_ambiguous` until a `receipt` event for the message id arrives, and the result `sent` after it.
+
+`send_message` takes media as base64 with its MIME type, up to 10 MiB, or as the `media_id` of a stored message. The server does not convert media, so a sticker must be `image/webp` and a voice note `audio/ogg; codecs=opus`.
+
+The server sends read receipts and typing indicators only when a client calls `mark_read` or `set_typing`.
 
 ## Connect clients
 

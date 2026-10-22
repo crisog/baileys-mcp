@@ -4,10 +4,12 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Store } from '../store.ts';
 import type { WhatsAppConnection } from '../whatsapp/connection.ts';
 
+import { registerSendTool } from './send.ts';
 import { registerReadTools } from './read.ts';
 import { registerMediaTool } from './media.ts';
 import { registerEventsTool } from './events.ts';
 import { registerStatusTools } from './status.ts';
+import { registerActionTools } from './actions.ts';
 
 export type ToolServices = {
   store: Store;
@@ -20,4 +22,6 @@ export function registerTools(server: McpServer, services: ToolServices): void {
   registerReadTools(server, services);
   registerEventsTool(server, services);
   registerMediaTool(server, services);
+  registerSendTool(server, services);
+  registerActionTools(server, services);
 }
