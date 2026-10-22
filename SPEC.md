@@ -262,8 +262,8 @@ Each Baileys capability that an embedding application needs, and the part of thi
 | Own identity `socket.user.id` and `lid`                                                                   | `get_status` (REQ-CONN-007)                                             |
 | `getMessage` for retry requests                                                                           | Internal (REQ-STORE-003)                                                |
 | `messages.upsert`                                                                                         | `message` event (REQ-EVT-007)                                           |
-| Edits from `messages.upsert` and `messages.update`, including `secretEncryptedMessage`                    | `message_edited` event (REQ-EVT-008)                                    |
-| Deletes (`messageStubType` REVOKE)                                                                        | `message_deleted` event (REQ-EVT-009)                                   |
+| Edits from `messages.upsert`, including `secretEncryptedMessage`                                          | `message_edited` event (REQ-EVT-008)                                    |
+| Deletes (REVOKE protocol messages in `messages.upsert`)                                                   | `message_deleted` event (REQ-EVT-009)                                   |
 | `messages.reaction`                                                                                       | `reaction` event (REQ-EVT-010)                                          |
 | Poll votes (`decryptPollVote`)                                                                            | `poll_vote` event (REQ-EVT-011)                                         |
 | `message-receipt.update`, status in `messages.update`                                                     | `receipt` event (REQ-EVT-012)                                           |
@@ -309,6 +309,8 @@ Each Baileys capability that an embedding application needs, and the part of thi
 | DEC-012 | ratified, 2026-10-22    | Access and refresh tokens use the MCP plugin's default lifetimes.                                                                                                                                                                                                                                                                                                                            |
 | DEC-013 | ratified, 2026-10-22    | v1 has no automated tests, because no WhatsApp account is available to test against. `npm run verify` and scripted runs against the assembled server check each change. Behavior that needs a paired account is checked by hand after pairing.                                                                                                                                               |
 | DEC-014 | provisional, 2026-10-22 | The MCP plugin keeps the base plugin's grant types, which include client credentials, so the embedding application uses that grant (REQ-AUTH-008).                                                                                                                                                                                                                                           |
+| DEC-015 | provisional, 2026-10-22 | Input that fails a tool's schema returns the SDK's validation error result: `isError` with a text message, not the `{ code, message, retryable }` shape. The SDK validates input before a tool handler runs and offers no hook to shape that result.                                                                                                                                         |
+| DEC-016 | provisional, 2026-10-22 | `pair` also returns `pairing_not_allowed` while a linked account is `connecting`, `reconnecting`, or `replaced`, because a pair call deletes the credentials and no tool unlinks a working account. `pair` replaces the credentials only when no account is linked or WhatsApp logged the account out.                                                                                       |
 
 ## Risks
 
@@ -316,7 +318,7 @@ Each Baileys capability that an embedding application needs, and the part of thi
 - **Public API contract.** The tool names and schemas are a contract for agents and for embedding applications.
 - **Persistent data.** The store holds message content and credentials. A store schema change needs a migration.
 - **Infrastructure.** The server needs a persistent volume and exactly one replica.
-- **Unofficial client.** WhatsApp can change its protocol or restrict an account that uses Baileys.
+- **Unofficial client.** WhatsApp can change its protocol or restrict an account that uses Baileys. Baileys 7.0.0-rc14 emits no server acknowledgement for the account's own sends and reports a played group voice note as read, so `server_ack` receipts and group `played` receipts are rare or absent.
 
 ## Acceptance criteria
 
