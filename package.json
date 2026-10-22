@@ -10,7 +10,14 @@
     "node": "24.22.1"
   },
   "dependencies": {
+    "@better-auth/cimd": "1.7.12",
+    "@better-auth/core": "1.7.12",
+    "@better-auth/mcp": "1.7.12",
+    "@better-auth/oauth-provider": "1.7.12",
+    "@hono/node-server": "2.1.5",
     "@modelcontextprotocol/sdk": "1.32.1",
+    "better-auth": "1.7.12",
+    "better-call": "1.4.4",
     "pino": "10.4.0",
     "zod": "4.6.7"
   },
@@ -27,6 +34,7 @@
   "scripts": {
     "prepare": "husky",
     "start": "node src/main.ts",
+    "register-client": "node src/register-client.ts",
     "typecheck": "tsrs --noEmit",
     "lint": "oxlint --deny-warnings",
     "lint:fix": "oxlint --fix",
