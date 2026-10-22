@@ -2,6 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import { z } from 'zod';
 
+import type { ReadEvents } from '../store.ts';
 import type { ToolServices } from './register.ts';
 
 import { eventSchema, EVENT_TYPES } from '../store.ts';
@@ -73,16 +74,19 @@ export function registerEventsTool(server: McpServer, { store }: ToolServices): 
         start = store.cursorBefore(since);
       }
 
-      let chatJids: string[] | undefined;
-      if (chats !== undefined) {
-        chatJids = chats.flatMap((chat) => store.aliasesOf(chatJidOf(chat)));
-      }
-      const query = { types, chatJids, limit };
+      // Aliases resolve on each read, so a mapping learned during the wait applies to the message that taught it
+      const readPage = (cursor: number): ReadEvents => {
+        let chatJids: string[] | undefined;
+        if (chats !== undefined) {
+          chatJids = chats.flatMap((chat) => store.aliasesOf(chatJidOf(chat)));
+        }
+        return store.readEvents({ after: cursor, types, chatJids, limit });
+      };
       const deadline = Date.now() + wait_ms;
-      let page = store.readEvents({ ...query, after: start });
+      let page = readPage(start);
       while (page.events.length === 0 && Date.now() < deadline && !signal.aborted) {
         await store.waitForEvent({ timeoutMs: deadline - Date.now(), signal });
-        page = store.readEvents({ ...query, after: page.next });
+        page = readPage(page.next);
       }
       const result = {
         events: page.events,

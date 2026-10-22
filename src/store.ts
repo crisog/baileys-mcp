@@ -265,7 +265,7 @@ type ReadEventsParams = {
   limit: number;
 };
 
-type ReadEvents = {
+export type ReadEvents = {
   events: Event[];
   next: number;
   hasMore: boolean;
