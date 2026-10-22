@@ -48,7 +48,7 @@ The server is ready when its log has the line `"msg":"server listening"`. About 
 grep -m1 '"msg":"server listening"' "$RUN/logs/server.log"
 ```
 
-While no phone is linked, WhatsApp closes the unscanned QR session after about 2.5 minutes with code 408, and the server pairs again. The states `reconnecting`, `connecting`, and `pairing` repeat in the log and the event log. This is normal.
+While no phone is linked, WhatsApp closes the unscanned QR session after about 2.5 minutes with code 408, and the server pairs again. The states `reconnecting` and `pairing` repeat in the log and the event log. This is normal.
 
 ## Health check
 
