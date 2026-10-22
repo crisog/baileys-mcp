@@ -16,6 +16,7 @@
     "@better-auth/oauth-provider": "1.7.12",
     "@hono/node-server": "2.1.5",
     "@modelcontextprotocol/sdk": "1.32.1",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
     "better-auth": "1.7.12",
     "better-call": "1.4.4",
     "pino": "10.4.0",

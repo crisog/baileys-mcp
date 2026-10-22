@@ -2,9 +2,12 @@ import { z } from 'zod';
 
 const DEFAULT_PORT = 3_000;
 const BETTER_AUTH_SECRET_LENGTH_MIN = 32;
+const DEFAULT_RETENTION_DAYS = 30;
+const RETENTION_DAYS_MAX = 3_650;
 
 const configSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65_535).default(DEFAULT_PORT),
+  RETENTION_DAYS: z.coerce.number().int().min(1).max(RETENTION_DAYS_MAX).default(DEFAULT_RETENTION_DAYS),
   PUBLIC_BASE_URL: z
     .url({ protocol: /^https?$/ })
     .refine((value) => new URL(value).origin === value, 'must be an origin with no path or trailing slash'),
