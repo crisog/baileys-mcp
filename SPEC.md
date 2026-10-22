@@ -122,7 +122,32 @@ Error codes: `not_paired`, `not_connected`, `unknown_chat`, `unknown_message`, `
 
 ### Endpoint and authentication
 
-The server is its own OAuth authorization server and the protected resource, following the MCP authorization specification. Clients add it with no headers and choose Authorize.
+The server is its own OAuth authorization server and the protected resource, following the MCP authorization specification. Clients add it with no headers and choose Authorize. Better Auth's [MCP plugin](https://better-auth.com/docs/plugins/mcp) provides the authorization server, the discovery documents, and the token check on `/mcp`.
+
+```mermaid
+sequenceDiagram
+  participant C as MCP client
+  participant S as baileys-mcp
+  participant M as Client metadata host
+  participant O as Operator
+  participant GH as GitHub
+  C->>S: POST /mcp without a token
+  S-->>C: 401, WWW-Authenticate points to resource metadata
+  C->>S: Read resource and authorization server metadata
+  C->>S: GET /oauth2/authorize (client_id URL, PKCE challenge, resource)
+  S->>M: Fetch the client metadata document
+  S-->>O: Sign-in page
+  O->>GH: Sign in
+  GH-->>S: Operator account
+  S-->>O: Consent page
+  O->>S: Approve
+  S-->>C: Redirect with authorization code
+  C->>S: POST /oauth2/token (code, PKCE verifier)
+  S-->>C: Access token (JWT, audience /mcp) and refresh token
+  C->>S: POST /mcp with the access token
+```
+
+The authorization endpoints are `/oauth2/authorize`, `/oauth2/token`, and, for dynamic registration, `/oauth2/register`, under Better Auth's base path. Clients find them through the discovery documents, so the paths are not part of the contract.
 
 - **REQ-AUTH-001** The server serves MCP over Streamable HTTP at `/mcp`. It also serves the OAuth endpoints, the discovery documents, and the sign-in and consent pages. Every other path returns 404.
 - **REQ-AUTH-002** A request to `/mcp` without a valid access token returns 401 with a `WWW-Authenticate` header that points to the protected resource metadata. No tool runs for a rejected request.
@@ -134,6 +159,12 @@ The server is its own OAuth authorization server and the protected resource, fol
 - **REQ-AUTH-008** The embedding application, a headless service, gets its tokens with the client credentials grant as a pre-registered confidential client.
 - **REQ-AUTH-009** The server accepts MCP requests that omit the `MCP-Protocol-Version` header. Grok Bot omits it when it reuses a session.
 - **REQ-AUTH-010** The server does not start without its signing secret, its public base URL, and the operator account configuration.
+- **REQ-AUTH-011** A client whose `client_id` is an HTTPS URL is accepted without registration. The server fetches the metadata document at that URL over HTTPS only. It resolves the host once, rejects special-use addresses (RFC 6890), refuses redirects, and stops after 5 s or 5 KB.
+- **REQ-AUTH-012** Dynamic registration needs no prior authentication. Each client IP address can register at most 5 clients per minute and make at most 20 token requests per minute.
+- **REQ-AUTH-013** The `/mcp` resource requires the scope `whatsapp`. A token without it gets 403 with an `insufficient_scope` challenge. A client that also requests `offline_access` receives a refresh token.
+- **REQ-AUTH-014** The consent page shows the client's name and the requested scopes. It renders only for an authorization request whose signed query parameters verify.
+- **REQ-AUTH-015** Each refresh issues a new refresh token. The previous refresh token stays valid for 30 s, so a client that retries a refresh does not lose access.
+- **REQ-AUTH-016** When an access token is DPoP-bound (RFC 9449), every request with it must carry a valid DPoP proof.
 
 ### Connection and pairing
 
@@ -202,6 +233,7 @@ The server is its own OAuth authorization server and the protected resource, fol
 - **REQ-STORE-001** Stored messages, the event log, and the send ledger survive a restart.
 - **REQ-STORE-002** The server deletes messages and events older than the retention period (default 30 days, configurable) and send ledger entries older than 7 days.
 - **REQ-STORE-003** When a recipient asks for a retry of a message the account sent, Baileys requests the message from the server and the server returns it from its store.
+- **REQ-STORE-004** The OAuth state (clients, consents, tokens, and signing keys) lives in the same durable store and survives a restart. Its tables change only through committed migrations.
 
 ## Invariants
 
@@ -214,6 +246,7 @@ The server is its own OAuth authorization server and the protected resource, fol
 - No tool runs for a request without a valid access token.
 - Only the operator account can authorize a client.
 - No tool result or log line contains credentials, message secrets, or poll secrets. Logs contain no message content.
+- No log line contains an access token, a refresh token, an authorization code, or a client secret.
 - The server sends read receipts and typing indicators only when a client asks.
 
 ## Capability coverage
@@ -256,24 +289,28 @@ Each Baileys capability that an embedding application needs, and the part of thi
 - More than one WhatsApp account per server process
 - User accounts and sign-in for anyone other than the operator
 - Static API keys and secret headers
+- Revoking a client's access
 
 ## Decisions
 
-| ID      | Status                  | Decision                                                                                                                                                                                                                                                                                                                                                                                 |
-| ------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| DEC-001 | ratified                | The server uses `@modelcontextprotocol/sdk` and defines every tool schema with `zod`.                                                                                                                                                                                                                                                                                                    |
-| DEC-002 | provisional, 2026-10-22 | Pull with a client-owned cursor and long polling is the only event path in v1. The SDK drops a notification in stateless mode when no client stream is open, and no client is known to keep one open.                                                                                                                                                                                    |
-| DEC-003 | provisional, 2026-10-22 | Media travels as base64 inside MCP content blocks, up to 10 MiB per item. The MCP content types are text, image, audio, resource link, and embedded resource, so video and documents travel as embedded blob resources.                                                                                                                                                                  |
-| DEC-004 | provisional, 2026-10-22 | Every write requires an idempotency key. The server fixes the WhatsApp message id before it sends, which Baileys supports through the `messageId` send option.                                                                                                                                                                                                                           |
-| DEC-005 | provisional, 2026-10-22 | Pairing returns the raw QR string and supports pairing codes. The server does not render QR images in v1.                                                                                                                                                                                                                                                                                |
-| DEC-006 | ratified, 2026-10-22    | Authentication is OAuth through Better Auth: `better-auth` with the `@better-auth/mcp` and `@better-auth/cimd` plugins. Grok Bot connectors authenticate only through OAuth ([Cursor forum, 2026-09-17](https://forum.cursor.com/t/grok-bot-custom-mcp-oauth-fails-before-sign-in-redirect-uri-not-allowed/171877)). `@better-auth/mcp` does not depend on an MCP SDK, so DEC-001 holds. |
-| DEC-007 | provisional, 2026-10-22 | v1 leaves out URL media sources (the server would fetch any URL a client names), deleting for everyone, and group member lookup, because no client needs them yet.                                                                                                                                                                                                                       |
-| DEC-008 | provisional, 2026-10-22 | The operator signs in with GitHub, and the server accepts only the GitHub account it is configured with. The server stores no operator password.                                                                                                                                                                                                                                         |
-| DEC-009 | provisional, 2026-10-22 | The server supports both client ID metadata documents and dynamic registration. Grok Bot used dynamic registration in September 2026 and a client ID metadata document (`https://cursor.com/oauth/mcp-client.json`) in October 2026. Anyone can register a client, but no client gets a token without the operator's sign-in and consent.                                                |
+| ID      | Status                  | Decision                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DEC-001 | ratified                | The server uses `@modelcontextprotocol/sdk` and defines every tool schema with `zod`.                                                                                                                                                                                                                                                                                                        |
+| DEC-002 | provisional, 2026-10-22 | Pull with a client-owned cursor and long polling is the only event path in v1. The SDK drops a notification in stateless mode when no client stream is open, and no client is known to keep one open.                                                                                                                                                                                        |
+| DEC-003 | provisional, 2026-10-22 | Media travels as base64 inside MCP content blocks, up to 10 MiB per item. The MCP content types are text, image, audio, resource link, and embedded resource, so video and documents travel as embedded blob resources.                                                                                                                                                                      |
+| DEC-004 | provisional, 2026-10-22 | Every write requires an idempotency key. The server fixes the WhatsApp message id before it sends, which Baileys supports through the `messageId` send option.                                                                                                                                                                                                                               |
+| DEC-005 | provisional, 2026-10-22 | Pairing returns the raw QR string and supports pairing codes. The server does not render QR images in v1.                                                                                                                                                                                                                                                                                    |
+| DEC-006 | ratified, 2026-10-22    | Authentication is OAuth through Better Auth: `better-auth` with the `@better-auth/mcp` and `@better-auth/cimd` plugins. Grok Bot connectors authenticate only through OAuth ([Cursor forum, 2026-09-17](https://forum.cursor.com/t/grok-bot-custom-mcp-oauth-fails-before-sign-in-redirect-uri-not-allowed/171877)). `@better-auth/mcp` does not depend on an MCP SDK, so DEC-001 holds.     |
+| DEC-007 | provisional, 2026-10-22 | v1 leaves out URL media sources (the server would fetch any URL a client names), deleting for everyone, and group member lookup, because no client needs them yet.                                                                                                                                                                                                                           |
+| DEC-008 | provisional, 2026-10-22 | The operator signs in with GitHub, and the server accepts only the GitHub account it is configured with. The server stores no operator password.                                                                                                                                                                                                                                             |
+| DEC-009 | provisional, 2026-10-22 | The server supports both client ID metadata documents and dynamic registration. Grok Bot used dynamic registration in September 2026 and a client ID metadata document (`https://cursor.com/oauth/mcp-client.json`) in October 2026. Anyone can register a client, but no client gets a token without the operator's sign-in and consent.                                                    |
+| DEC-010 | provisional, 2026-10-22 | The server composes Better Auth's `jwt()`, `mcp()`, and `cimd()` plugins and no separate `oauthProvider()`, as the MCP plugin page requires. `cimd()` uses the Node fetch transport from `@better-auth/cimd/node` and the `mcp-2026-07-28` metadata profile. The rate limits, the 30 s refresh overlap, and the metadata fetch limits in REQ-AUTH-011, 012, and 015 are the plugin defaults. |
+| DEC-011 | provisional, 2026-10-22 | One scope, `whatsapp`, grants every tool. A split into read and send scopes waits until a client needs read-only access.                                                                                                                                                                                                                                                                     |
+| DEC-012 | ratified, 2026-10-22    | Access and refresh tokens use the MCP plugin's default lifetimes.                                                                                                                                                                                                                                                                                                                            |
 
 ## Risks
 
-- **Security boundary.** A public endpoint that can read and send as a WhatsApp account, and an OAuth authorization server with open client registration. A leaked access or refresh token gives full access to that account until it expires or the operator revokes it.
+- **Security boundary.** A public endpoint that can read and send as a WhatsApp account, and an OAuth authorization server with open client registration. A leaked access or refresh token gives full access to that account until it expires, because v1 has no revocation.
 - **Public API contract.** The tool names and schemas are a contract for agents and for embedding applications.
 - **Persistent data.** The store holds message content and credentials. A store schema change needs a migration.
 - **Infrastructure.** The server needs a persistent volume and exactly one replica.
@@ -285,6 +322,8 @@ Each Baileys capability that an embedding application needs, and the part of thi
 - [ ] Grok Bot adds the server with no headers. The operator chooses Authorize, signs in with GitHub, and approves the consent page. Grok Bot then calls `get_status`.
 - [ ] A request to `/mcp` without a token returns 401 with the resource metadata pointer, and a sign-in with a GitHub account other than the operator's fails.
 - [ ] The embedding application gets a token with the client credentials grant and calls `pull_events`.
+- [ ] A client whose `client_id` URL resolves to a private address is rejected, and the server makes no request to that address.
+- [ ] A token without the `whatsapp` scope gets 403. A client keeps working through a refresh after its access token expires.
 - [ ] After a restart, the server reconnects without pairing again, and `pull_events` continues from the cursor the client held.
 - [ ] Two `send_message` calls with the same idempotency key produce one WhatsApp message and the same result.
 - [ ] A send that times out returns `ambiguous` with the message id and is not sent again.
